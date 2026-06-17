@@ -2,264 +2,527 @@
 name: laifaxin-outreach-v0.2 · decision-prompts
 type: meta
 status: active
-version: 0.2.0-alpha.0
+version: 0.2.0-alpha.1
 created: 2026-06-17
 updated: 2026-06-17
-tags: [v0.2, decision-prompts, llm-nodes, browser-agent]
-description: v0.2 alpha 浏览器 agent 决策节点完整 prompt 框架 · 3 个 LLM 节点(选客群 / 每页判精度 / 询盘识别)的输入 / 输出 / forbidden / confidence threshold / audit log · 落地 spec § 5.2
+tags: [v0.2, decision-prompts, llm-nodes, browser-agent, output-contract]
+description: v0.2 alpha 浏览器 agent 3 个 LLM 决策节点 · 输出 contract(合法 exemplar + schema 验证 + repair retry + fail-closed)+ 可验证决策条件(不靠 self-reported confidence)+ 统一 audit + failure_diagnostics · r1 deep-review 全面重写
 ---
 
-# Decision Prompts · v0.2 alpha
+# Decision Prompts · v0.2 alpha(r1 deep-review 重写版)
 
-> 本文是 spec § 5.2 三个 LLM 节点的可执行 prompt 框架。
-> 主路径 Tony § 0 #8:**不用 AI 评分** · 完全靠翻页 + LLM 节点 2 判精度。
+> **r1 deep-review 反馈**:原版 🔴 大改 · 12 条硬伤
+> 1) 伪 YAML 占位符 · LLM 抄不准 · 2) `confidence` 不是已测概率,降级为 audit 字段 · 3) 节点 2 阈值 0.7 与权威 docs ≥80% 冲突 · 4) 单页判 boundary 不稳 · 5) 节点 3 漏真询盘风险 · 6) audit 不闭环
+>
+> **重写策略**:每节点改"合法 exemplar + schema validation + repair retry + fail-closed"· 决策条件改可验证(双页 / argmax gap / evidence 命中)· 统一 audit + 加 failure_diagnostics
 
-## LLM 节点 1 · 选客群(deferential + Confirm 闸 1)
+## § 0 · 通用执行流(所有节点遵守)
 
-### 输入
+```
+1. 准备 inputs(structured · 不混 natural language 自由文本)
+2. send prompt to Codex `gpt-5.4`
+3. parse YAML
+   - 失败 → repair retry (1 次 · 提示 "return ONLY raw YAML · NO code fences · NO comments")
+4. schema validate(JSON Schema-like · uniqueness/range/consistency)
+   - 失败 → repair retry (1 次)
+5. 仍失败 → fail-closed:
+   - audit.failure_diagnostics 记 error_type
+   - pause + 人工接管(不静默推进)
+6. 通过 validate → decision policy 判决(用可验证条件 · 不用 self-reported confidence)
+7. 写 audit(raw + normalized + validation + retry + final_disposition + human_override)
+```
+
+## § 1 · LLM 节点 1 · 选客群(`choose_audience`)
+
+### 1.1 Inputs(structured)
 
 ```yaml
 inputs:
-  product_positioning: <用户输入的产品定位 1-2 段>
-  candidates:                                       # 来发信 AI 推演返回的 4 客群
+  product_positioning: "用户输入的产品定位 1-2 段"
+  candidates:
     - audience_index: 1
-      name: <客群中文名>
-      recommend_reason: <推演给的理由>
-      coverage_estimate: <推演估的客群规模>
-    - audience_index: 2
-      ...
-  historical_dead_audiences:                        # grep raw/prospecting/<product>/audiences/*.md status=dead
-    - audience_slug: <已知不对路的客群>
-      dead_reason: <死亡原因>
+      name: "客群名"
+      recommend_reason: "推演给的理由"
+      coverage_estimate: 5000
+      # 推演自带的 confidence(若有 · 不强制)
+      laifaxin_score: 0.82
+    - { audience_index: 2, ... }
+    - { audience_index: 3, ... }
+    - { audience_index: 4, ... }
+  historical_dead_audiences:
+    - { audience_slug: "north-america-led-distributor", dead_reason: "已死客群无回复" }
 ```
 
-### Prompt
+### 1.2 Prompt(中文 · 紧)
 
 ```
-你是来发信外贸开发军师。
+You are a foreign-trade prospecting strategist for laifa.xin.
 
-任务:从 4 个客群候选中选 1 个最对路的客群,**写邮件开发它**。
+TASK: 从 4 个客群候选中选 1 个最对路的客群,**写邮件开发它**。
 
-判定原则:
-1. 必须是**客户产品词**对路(他们卖什么) · 不是你产品词(避免找同行)
-2. 避开历史 dead 客群(下方 historical_dead_audiences 列表)
-3. 优先选**采购方向**清晰 + **规模适中**(几百到几千家公司)的客群
-4. 推演 confidence < 0.7 时 · 输出 reject_all(让用户重搜)
+判定原则(按顺序):
+1. 客户产品词对路(他们卖什么)· 不是你产品词(避免找同行)
+2. 避开 historical_dead_audiences
+3. 规模 = 几百到几千家公司最适合 supervised spike
+4. 推演 laifaxin_score 仅作参考 · 不作硬标准
 
-输出 strictly yaml:
-chosen: <audience_index 1-4 或 null>
-reasoning: <50-100 字 · 为什么这个对路 · 为什么没选其他>
-confidence: <0-1 浮点>
-warnings: [<list of strings · 如有可疑 · 比如规模太大或对路度低>]
+OUTPUT RULES(STRICT):
+- Return raw YAML.
+- NO code fences (no ```).
+- NO Chinese comments / no explanation paragraphs.
+- NO placeholder syntax like <...>.
+- Output exactly one YAML document matching the example below.
+
+EXAMPLE (this is a LEGAL output — copy structure exactly):
+chosen: 2
+evidence_snippets:
+  - "candidate 2 name = 北美亚洲食品分销商"
+  - "candidate 2 recommend_reason = 主营亚洲食品 SKU 与产品定位'手工面'对路"
+applied_rules:
+  - rule_1_customer_product_match
+  - rule_3_size_suitable
+why_not_top_alt:
+  audience_index: 1
+  reason: "candidate 1 规模偏大 · 1.5 万家 · 不适合 spike"
+warnings: []
 ```
 
-### 输出约束
+### 1.3 Output Schema(JSON Schema-like)
 
 ```yaml
-allowed_outputs:
-  - chosen: 1-4   # 选 1 个 audience_index
-  - chosen: null  # 全部不对路 · 触发关键词重搜
-forbidden_outputs:
-  - chosen: [1,2]    # 不可多选
-  - chosen: 5        # 超范围
-  - 无 reasoning
-  - 无 confidence
-
-confidence_threshold: 0.7
-on_low_confidence: pause + Confirm 闸 1(让用户拍板)
+schema:
+  type: object
+  required: [chosen, evidence_snippets, applied_rules, why_not_top_alt, warnings]
+  properties:
+    chosen:
+      oneOf:
+        - type: integer
+          enum: [1, 2, 3, 4]
+        - type: "null"        # "全部不对路 → 触发关键词重搜"路径
+    evidence_snippets:
+      type: array
+      items: { type: string, minLength: 10, maxLength: 200 }
+      minItems: 1
+      maxItems: 5
+    applied_rules:
+      type: array
+      items: { type: string }
+      uniqueItems: true
+      minItems: 1
+    why_not_top_alt:
+      type: object
+      required: [audience_index, reason]
+      properties:
+        audience_index: { type: integer, enum: [1, 2, 3, 4, 0] }  # 0 = 不适用(chosen=null)
+        reason: { type: string }
+    warnings:
+      type: array
+      items: { type: string }
 ```
 
-### Audit log 字段
+### 1.4 Decision Policy(可验证 · 不用 self-confidence)
 
-```yaml
-audit:
-  inputs:
-    - 4 候选完整文本
-    - 历史 dead 列表
-  llm_raw_output: <strictly yaml>
-  llm_normalized:
-    chosen: 2
-    reasoning: "..."
-    confidence: 0.82
-  user_decision:
-    presented_at: 2026-06-17T10:02:30
-    user_response: approved   # or modified_chose=3, or rejected_all
+```python
+def decide(parsed, inputs):
+    # 条件 A:chosen 是有效候选
+    if parsed.chosen not in [1, 2, 3, 4, None]:
+        return Failure(reason="invalid chosen")
+
+    # 条件 B:applied_rules 至少 1 条 + evidence_snippets 至少 1 条
+    if not parsed.applied_rules or not parsed.evidence_snippets:
+        return Failure(reason="missing evidence/rules")
+
+    # 条件 C:why_not_top_alt 一致性(chosen=null 必须 audience_index=0)
+    if parsed.chosen is None and parsed.why_not_top_alt.audience_index != 0:
+        return Failure(reason="inconsistent why_not_top_alt")
+
+    # 条件 D:chosen 是 historical_dead 中的客群 → 拒绝
+    if parsed.chosen in [audience for audience in inputs.historical_dead_audiences]:
+        return Failure(reason="chosen overlaps dead audiences")
+
+    return Success(audience_id=parsed.chosen)
 ```
 
----
+**Confirm 闸 1**:无论 LLM 输出多"自信" · 都必须用户拍板才进入下一步(spec § 5.1)。
 
-## LLM 节点 2 · 每页判精度(per-page accuracy)
+## § 2 · LLM 节点 2 · 每页判精度(`per_page_accuracy`)· 双页连续确认
 
-### 输入(每翻一页调用一次)
+> **r1 deep-review #D3.1-3.2 必修**:不用单页判 boundary(误判一页就砍批量)· 改"双页连续跌破"· 阈值与权威 docs `≥80%` 对齐(参 [docs/zhinan/02-filter-customers](https://www.laifa.xin/zhinan/02-filter-customers))。
+
+### 2.1 Inputs
 
 ```yaml
 inputs:
-  page_number: <当前页码>
-  rows:                          # 当前页 10 行
-    - company_name: <公司名>
-      country: <国家>
-      description: <业务描述 1-2 句>
-    - ...
-  product_positioning: <用户产品定位>
-  audience_context: <选定客群>
-  cumulative_pages_read: <已读累积页数>
+  page_number: 61
+  rows:
+    - { index: 0, company_name: "...", country: "...", description: "..." }
+    - { index: 1, ... }
+    # ... 10 行
+  product_positioning: "..."
+  audience_context: { audience_id: 2, name: "..." }
+  cumulative_pages_read: 61
+  prev_page_accuracy: 0.85   # 上一页 (page=60) 的 accuracy · None if page=1
 ```
 
-### Prompt
+### 2.2 Prompt
 
 ```
-你是外贸客户精准度判定军师。
+You are an evaluator for outbound prospecting per-page accuracy.
 
-任务:看本页 10 个公司,判断有几个真的对路(客户 = 会买你产品的)。
+TASK:看本页 10 个公司 · 数有几个真的对路(客户 = 会买你产品的)。
 
-判定原则:
-1. 业务描述明确卖 / 经营**你的产品类**(或上下游) → 对路
-2. 描述含糊 / 主营业务无关 → 不对路
-3. **是同行**(也做你产品的工厂 / 制造商)→ 不对路
+JUDGMENT(每行):
+1. 业务描述明确卖 / 经营你的产品类(或上下游)→ 对路
+2. 描述含糊 / 主营无关 → 不对路
+3. 是同行(也做工厂 / 制造商)→ 不对路
 4. 公司名 / 国家不影响判定 · 只看业务描述本质
 
-输出 strictly yaml:
-total_rows: <int · 当前页行数,通常 10>
-on_target_count: <int · 对路数>
-accuracy: <float = on_target / total>
-verdict: <accurate_continue | boundary_reached | hopeless>
-  # accurate_continue: accuracy ≥ 0.7 · 翻下一页
-  # boundary_reached: accuracy < 0.7 · 记录精度边界
-  # hopeless: cumulative_pages_read < 5 AND accuracy < 0.3 · 触发重搜
-flagged_rows: [<list of 该被拒/被存疑的行 index 0-9>]
-confidence: <0-1>
+OUTPUT RULES(STRICT):
+- Return raw YAML.
+- NO code fences.
+- NO explanation paragraphs.
+- NO placeholder syntax.
+
+EXAMPLE:
+total_rows: 10
+on_target_count: 5
+on_target_indices: [0, 2, 5, 7, 8]
+not_on_target_indices: [1, 3, 4, 6, 9]
+flagged_indices: [3, 6]  # 主营是同行(中国工厂)
+accuracy: 0.50
+evidence_snippets:
+  - "row 0 description '亚洲食品零售 5000+ SKU' → 对路"
+  - "row 3 description '面条工厂江苏南京' → 同行 · flagged"
 ```
 
-### 输出约束
+### 2.3 Output Schema
 
 ```yaml
-allowed_outputs:
-  - verdict: accurate_continue
-  - verdict: boundary_reached
-  - verdict: hopeless
-forbidden_outputs:
-  - 无 accuracy
-  - flagged_rows 含超 9 的 index
+schema:
+  type: object
+  required: [total_rows, on_target_count, on_target_indices, not_on_target_indices, flagged_indices, accuracy, evidence_snippets]
+  properties:
+    total_rows: { type: integer, enum: [10] }   # 来发信每页恒 10 行
+    on_target_count: { type: integer, minimum: 0, maximum: 10 }
+    on_target_indices:
+      type: array
+      items: { type: integer, minimum: 0, maximum: 9 }
+      uniqueItems: true
+    not_on_target_indices:
+      type: array
+      items: { type: integer, minimum: 0, maximum: 9 }
+      uniqueItems: true
+    flagged_indices:
+      type: array
+      items: { type: integer, minimum: 0, maximum: 9 }
+      uniqueItems: true
+    accuracy: { type: number, minimum: 0, maximum: 1 }
+    evidence_snippets:
+      type: array
+      items: { type: string }
+      minItems: 1
 
-confidence_threshold: 0.7
-on_low_confidence: pause + 用户审核当前页判断
-boundary_threshold: 0.7   # 精准/不精准的分界
+cross_field_validation:
+  - len(on_target_indices) == on_target_count
+  - len(on_target_indices) + len(not_on_target_indices) == total_rows
+  - intersection(on_target_indices, not_on_target_indices) == []
+  - accuracy == on_target_count / total_rows
 ```
 
-### Audit log 字段
+### 2.4 Decision Policy · 双页连续跌破 + 80% 对齐(r1 #D3.1-3.2 必修)
 
-```yaml
-audit:
-  page_number: 61
-  raw_rows: [...]
-  llm_output:
-    on_target_count: 5
-    accuracy: 0.50
-    verdict: boundary_reached
-    flagged_rows: [1, 3, 4, 7, 9]
-    confidence: 0.85
-  user_decision:
-    presented_at: 2026-06-17T10:08:00
-    user_response: approved_boundary   # or moved_boundary=60, or rejected_continue
+```python
+def decide_per_page(parsed, inputs):
+    # validate 已通过(上方 schema + cross_field)
+    current = parsed.accuracy
+    prev = inputs.prev_page_accuracy   # None if page=1
+
+    # ≥80% threshold(对齐 docs 权威 · 见 spec § 3.3 #G4)
+    ACCURATE_HIGH = 0.80   # 准
+    BOUNDARY_LOW = 0.60    # 跌破 = 边界候选(放宽 · 双页确认)
+
+    # 条件 1:当前页 ≥ ACCURATE_HIGH → 继续翻
+    if current >= ACCURATE_HIGH:
+        return Continue(direction="next_page")
+
+    # 条件 2:当前页 < BOUNDARY_LOW · 且上一页也 < BOUNDARY_LOW → boundary 确认
+    if current < BOUNDARY_LOW and (prev is not None and prev < BOUNDARY_LOW):
+        return BoundaryReached(at_page=inputs.page_number - 1)  # 最后一个"准"页
+
+    # 条件 3:当前页 < BOUNDARY_LOW · 上一页 ≥ BOUNDARY_LOW → "可能误判一页" · 翻下一页确认
+    if current < BOUNDARY_LOW and (prev is None or prev >= BOUNDARY_LOW):
+        return Continue(direction="next_page", note="suspect_boundary_need_confirm")
+
+    # 条件 4:[BOUNDARY_LOW, ACCURATE_HIGH) 中间区 · 翻下一页(不判 boundary 也不停)
+    if BOUNDARY_LOW <= current < ACCURATE_HIGH:
+        return Continue(direction="next_page", note="middle_zone_unstable")
+
+    # 条件 5:前 5 页累积平均 < BOUNDARY_LOW · 触发 hopeless
+    if inputs.cumulative_pages_read < 5 and current < BOUNDARY_LOW:
+        return Hopeless(reason="early_pages_low_accuracy")
+
+    return Failure(reason="unreachable_policy_branch")
 ```
 
----
+**关键差异 vs 原版**:
+- 单页跌破 0.7 不再立判 boundary · 必须**双页连续 < 0.6** 才确认
+- 中间区(0.6-0.8)继续翻 · 不停
+- `accuracy` 是 schema 验证过的整数比 · 不是模型 self-reported confidence
 
-## LLM 节点 3 · 询盘识别(handoff 标签 · Tony § 0 #7)
+## § 3 · LLM 节点 3 · 询盘识别(`inquiry_recognition`)· Recall-safe
 
-### 输入(客户回信时触发 · 跨 run)
+> **r1 deep-review #D3.3 必修**:原版 0.85 高阈值 + 低 confidence → neutral 静默沉 = **倾向漏真询盘**。改为非对称:`非 inquiry` 维持高阈值 / `inquiry` 候选领先就强制人工升级。
+
+### 3.1 Inputs
 
 ```yaml
 inputs:
-  customer_email_body: <客户回信全文 · 英文 · 脱敏前预处理>
-  customer_company: <公司名>
-  customer_country: <国家>
-  sequence_round: <当前在 sequence 第几轮>
-  historical_replies:                    # 该联系人之前的回信(如有)
-    - round: 1
-      summary: <一句话摘要>
-      tag_applied: <如有打的标签>
+  customer_email_body: "客户回信全文 · 英文"   # 原文存 repo 外 · 见 audit
+  customer_company: "..."
+  customer_country: "..."
+  sequence_round: 2
+  historical_replies:
+    - { round: 1, summary: "...", tag_applied: "ooo" }
 ```
 
-### Prompt
+### 3.2 Prompt
 
 ```
-你是外贸跟进推进军师。
+You are a foreign-trade reply-classification assistant for laifa.xin.
 
-任务:看客户这封回信 · 判定该打哪个标签:
-- inquiry: 询盘(明确问价 / 索样 / 约 call / 想了解产品)→ 高优先 · 立即转人工
-- ooo: Out of Office 自动回复(节假日 / 出差 / 假期)→ 不算回复
-- referral: 转介(对方说"我不负责 · 联系 X")→ 触发新联系人流程
-- rejection: 拒绝(明确"不需要 / 不感兴趣 / 已有供应商")→ 永久跳过
-- neutral: 不确定(语气模糊 · 信息不足 · 需人工审核)→ 不动 sequence
+TASK:看客户这封回信 · 判定该打哪个标签:
+- inquiry: 明确问价 / 索样 / 约通话 / 想了解产品
+- ooo: 节假日 / 出差 / 假期自动回复
+- referral: "我不负责 · 联系 X"
+- rejection: 明确"不需要 / 已有供应商"
+- neutral: 语气模糊 / 信息不足
 
-判定原则:
-1. inquiry 必须明确表达"想了解 / 想买 / 给我看 / 报价"等积极意图
-2. ooo 关键词:"out of office" / "OOO" / "vacation" / "auto-reply" / 节假日提及
-3. 拿不准 → neutral · 严禁瞎打 inquiry / rejection
+OUTPUT RULES(STRICT):
+- Return raw YAML.
+- NO code fences.
+- NO explanation paragraphs.
+- candidate_tags 必须恰好 5 个 key · 值在 [0,1] · sum 可不为 1。
 
-输出 strictly yaml:
-tag: <inquiry | ooo | referral | rejection | neutral>
-reasoning: <50-100 字>
-confidence: <0-1>
-flagged_keywords: [<list · 你看到的关键证据词>]
-candidate_tags:                    # 5 个标签的 confidence
-  inquiry: <0-1>
-  ooo: <0-1>
-  referral: <0-1>
-  rejection: <0-1>
-  neutral: <0-1>
+EXAMPLE:
+tag: inquiry
+evidence_keywords: [pricing, MOQ, samples]
+evidence_quotes:
+  - "Could you send pricing for 100 units?"
+  - "What's the MOQ?"
+candidate_tags:
+  inquiry: 0.85
+  ooo: 0.02
+  referral: 0.04
+  rejection: 0.05
+  neutral: 0.04
+sequence_round_aware: true
 ```
 
-### 输出约束
+### 3.3 Output Schema
 
 ```yaml
-allowed_outputs:
-  - tag: <one of 5>
-forbidden_outputs:
-  - tag: null
-  - 同时多个标签
-  - 无 reasoning
+schema:
+  required: [tag, evidence_keywords, evidence_quotes, candidate_tags, sequence_round_aware]
+  properties:
+    tag:
+      type: string
+      enum: [inquiry, ooo, referral, rejection, neutral]
+    evidence_keywords:
+      type: array
+      items: { type: string }
+      minItems: 1
+    evidence_quotes:
+      type: array
+      items: { type: string }
+      minItems: 1
+    candidate_tags:
+      type: object
+      required: [inquiry, ooo, referral, rejection, neutral]
+      properties:
+        inquiry: { type: number, minimum: 0, maximum: 1 }
+        ooo: { type: number, minimum: 0, maximum: 1 }
+        referral: { type: number, minimum: 0, maximum: 1 }
+        rejection: { type: number, minimum: 0, maximum: 1 }
+        neutral: { type: number, minimum: 0, maximum: 1 }
+    sequence_round_aware: { type: boolean }
 
-confidence_threshold: 0.85   # 询盘错判代价大 · 阈值更高
-on_low_confidence: pause + 人工审核 · 默认标 neutral · sequence 不动
+cross_field_validation:
+  - argmax(candidate_tags) == tag   # 标签一致性
 ```
 
-### Audit log 字段
+### 3.4 Decision Policy · 非对称 Recall-safe
+
+```python
+def decide_inquiry(parsed, inputs):
+    # validate 已通过(上方 schema + cross_field)
+    INQUIRY_AUTO_THRESHOLD = 0.85   # auto-apply inquiry 标签
+    INQUIRY_FLAG_THRESHOLD = 0.55   # 召人工 · 不静默沉
+    NON_INQUIRY_AUTO_THRESHOLD = 0.85   # 其他标签 auto
+
+    p = parsed.candidate_tags
+
+    # 条件 1:inquiry 候选超 0.85 → auto-apply
+    if p.inquiry >= INQUIRY_AUTO_THRESHOLD and parsed.tag == "inquiry":
+        return AutoApply(tag="inquiry")
+
+    # 条件 2:inquiry 候选 0.55-0.85 之间 OR argmax 但低于 0.85 → 强制人工升级
+    # ⚠️ 不静默沉到 neutral · 必须召人工
+    if p.inquiry >= INQUIRY_FLAG_THRESHOLD:
+        return EscalateToHuman(
+            reason="inquiry candidate elevated",
+            pre_filled_tag="inquiry"   # 提示人工"AI 倾向 inquiry"
+        )
+
+    # 条件 3:非 inquiry 标签超 0.85 → auto-apply
+    if parsed.tag != "inquiry" and max(p[t] for t in ["ooo", "referral", "rejection", "neutral"]) >= NON_INQUIRY_AUTO_THRESHOLD:
+        return AutoApply(tag=parsed.tag)
+
+    # 条件 4:argmax gap > 0.4 (top 与第二名差距大)→ auto-apply
+    sorted_p = sorted(p.values(), reverse=True)
+    if sorted_p[0] - sorted_p[1] > 0.4:
+        return AutoApply(tag=parsed.tag)
+
+    # 兜底:不静默 · 召人工
+    return EscalateToHuman(
+        reason="low confidence / ambiguous",
+        pre_filled_tag=parsed.tag
+    )
+```
+
+**关键差异 vs 原版**:
+- inquiry 倾向(0.55+)即使没到 0.85 也**召人工**,不是默默标 neutral
+- 用 `argmax gap` 验证 · 不用 self-reported confidence
+- "不漏真询盘"通过非对称阈值 + 强制 escalate 实现
+
+## § 4 · 统一 audit schema(三节点共用)
 
 ```yaml
-audit:
-  customer_email_hash: sha256(原文)     # 不存原文 · 防隐私(Tony § 0 #10 不考虑合规 但工程仍存 hash)
-  llm_output:
-    tag: inquiry
-    reasoning: "..."
-    confidence: 0.91
-    flagged_keywords: ["pricing", "MOQ", "samples"]
-    candidate_tags: {inquiry: 0.91, ooo: 0.02, referral: 0.04, rejection: 0.01, neutral: 0.02}
-  agent_action:
-    label_applied_to_contact: <contact_id>
-    sequence_step_skipped: <如有>
-  user_review:
-    reviewed_at: <如有人工审核>
-    user_override: <如有覆盖 LLM 标签>
+audit_entry:
+  node: choose_audience | per_page_accuracy | inquiry_recognition
+  run_id: 2026-06-17T10:00:00-001
+  step_index: 12
+  timestamp: 2026-06-17T10:08:35+08:00
+
+  # inputs 快照(脱敏 OK · 但失败诊断需要)
+  raw_input_snapshot_ref: ~/.codex/runs/<run_id>/inputs/step-12.json   # repo 外
+  inputs_hash: sha256(serialized inputs)
+
+  # 模型原始输出(无论成功失败都存)
+  llm_raw_output: "<raw text from gpt-5.4>"
+  llm_raw_output_ref: ~/.codex/runs/<run_id>/llm/step-12-raw.txt        # 大时外置 · repo 外
+
+  # 解析 + 验证 + 修复
+  llm_normalized:                                # null if parsing failed
+    chosen: 2
+    evidence_snippets: ["..."]
+    # ... 跟具体 schema 一致
+  validation_errors: []                          # list of {field, error_code, msg}
+  retry_count: 0                                 # 0 / 1
+
+  # 最终判决
+  final_disposition:
+    type: AutoApply | EscalateToHuman | Continue | BoundaryReached | Hopeless | Failure
+    reason: "..."
+    payload:
+      tag: inquiry                               # 或 audience_id / boundary_page 等
+
+  # 人工接管(如有)
+  human_override:
+    reviewed_at: 2026-06-17T10:09:00+08:00
+    user_response: approved | modified | rejected
+    user_decided_tag: inquiry                    # 如有
+    user_note: "AI 标签正确"
+
+  # 失败诊断(失败 run 必填)
+  failure_diagnostics:                           # null if successful
+    error_type: yaml_parse_fail | schema_fail | cross_field_inconsistent | repair_max_retry | timeout | other
+    invalid_fragment: "candidates: <missing field>"
+    repair_attempts: 1
+    taken_over_by_human: true
+    final_action: pause_and_alert
 ```
 
----
+### 4.1 节点 3 customer_email_body 处理(r1 #D4.2)
 
-## 全局约束
+> Tony § 0 #10 不考虑合规 · 但工程理由(体积 / repo 整洁)仍存
 
-### Confidence threshold(spec § 11 #3 · 维持默认 · W5 实测后微调)
+```yaml
+节点 3 audit:
+  customer_email_body: ~/.codex/runs/<run_id>/llm/step-12-email.txt   # 原文外置 · repo 外
+  customer_email_hash: sha256(原文)                                    # 入 repo 做指纹
+  customer_email_summary: "100 字精简摘要"                            # 入 repo 做证据
+```
 
-| 节点 | 默认 threshold | 理由 |
-|---|---|---|
-| 1 选客群 | 0.7 | 有 Confirm 闸 1 兜底 · 错了用户能拨回 |
-| 2 每页判精度 | 0.7 | 累积多页判定 · 单页错不致命 |
-| 3 询盘识别 | 0.85 | 错判代价大 · 错过真询盘比误标更糟 |
+**hash 不替代证据** · 只做指纹去重。复盘时:hash 指针 → 找本地 txt 原文 → 看 LLM 推理。
 
-### LLM 提供商
+## § 5 · Repair Retry Policy(全节点共用)
 
-alpha 期内主用 Codex CLI 内部 LLM(`gpt-5.4 via aihubmix` · 见 `~/.codex/config.toml`)· 不切换 · 减少变量。
+```python
+def call_with_repair(node_name, inputs, max_retries=1):
+    raw = await codex_llm_call(node_name, inputs)
+    parsed, errors = parse_and_validate(raw, schema)
+    if not errors:
+        return parsed, raw, retry_count=0
 
-### Audit 落点
+    # repair retry
+    repair_prompt = f"""
+    Previous output failed validation:
+    {format_errors(errors)}
 
-每个节点 audit 落 `~/.codex/runs/<run_id>/llm_logs.jsonl` 一行 · `run.json` 引用 summary。
+    OUTPUT RULES(STRICT · REPEAT):
+    - Return raw YAML.
+    - NO code fences.
+    - NO explanation paragraphs.
+    - Match schema EXACTLY.
+
+    Return ONLY the corrected YAML now:
+    """
+    raw2 = await codex_llm_call_with_history([raw, repair_prompt])
+    parsed2, errors2 = parse_and_validate(raw2, schema)
+    if not errors2:
+        return parsed2, raw2, retry_count=1
+
+    # fail-closed
+    raise FailClosed(node=node_name, errors=errors2, retry_count=1)
+```
+
+**Fail-closed 行为**:
+- 不静默推进
+- audit 完整记 failure_diagnostics
+- 整个 run pause · 召用户(SkyComputerUseClient.app 通知)
+
+## § 6 · 全局约束
+
+### 6.1 LLM 提供商锁定
+
+- alpha 期内主用 Codex CLI 内部 LLM(`gpt-5.4 via aihubmix` · 见 `~/.codex/config.toml`)
+- 不切换 · 减少变量
+
+### 6.2 confidence 字段语义(Important · r1 #D3.4)
+
+- `confidence`(若 LLM 主动给)只入 audit · **不参与决策门**
+- 决策门用可验证条件:**双页连续(节点 2)**, **argmax gap(节点 3)**, **schema/cross-field validation(节点 1/2/3)**, **evidence_snippets 命中(节点 1)**
+
+### 6.3 audit 落点
+
+每节点 audit 落 `~/.codex/runs/<run_id>/llm_logs.jsonl` 一行 · 字段对齐 § 4 audit_entry。
+
+- 体积:100KB/run × 3/day × 30d ≈ 9 MB · 不算大
+- 控制重点是 screenshots / 大附件 · 不是 llm_logs.jsonl
+
+### 6.4 Retention/Rotation
+
+```yaml
+~/.codex/runs/<run_id>/:
+  - 保留 30 天(cron 自动清理)
+  - 大于 100 MB 的 run · 截图压缩 + 长期归档(如有 W3 需求)
+  - llm_logs.jsonl 单文件 · 不分片(单 run 小)
+```
+
+## § 7 · 关联
+
+- 主 SKILL.md(本目录)
+- safety-gates.md(本目录)
+- runners/README.md(本目录 · prospect.py 调本 contract)
+- spec § 5.2 / § 6.2(本仓 specs/done/)
+- r1 deep-review:`raw/inbox/2026-06-17-codex-deep-审-decision-prompts.md`
