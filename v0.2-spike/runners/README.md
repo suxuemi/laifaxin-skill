@@ -50,8 +50,14 @@ class V02SpikeRunner:
         self.product = product_input
         self.run_id = generate_run_id()    # ts + uuid
         self.audit = AuditWriter(self.run_id)
-        # safety-gates.md / decision-prompts.md 是文档+数据源(markdown 内嵌 yaml 块)
-        # 加载方式:提取 fenced ```yaml 块 → 拼接 → schema validate
+        # safety-gates.md / decision-prompts.md 是文档+数据源(markdown 多类内容)
+        # 加载方式: from_md_sections 按 § 段标题分发 · 解析:
+        #   1) ```yaml 块 → schemas/configs
+        #   2) ```python 块 → policy functions
+        #   3) 无语言 prose fences → LLM prompts(节点 1/2/3)
+        #   4) ```yaml audit_entry 段 → audit schema
+        #   5) inline 字段引用 → 验证 field names
+        # ⚠️ 不是简单"提取所有 yaml 拼接" · 必须按段分发(decision-prompts.md § 0 已说明)
         self.safety = SafetyEnforcer.from_md_sections("safety-gates.md")
         self.decision = DecisionCaller.from_md_sections("decision-prompts.md")
         self.browser = ComputerUsePlugin()  # ~/.codex/computer-use/
@@ -101,7 +107,7 @@ class V02SpikeRunner:
                     "cumulative_pages_read": page,
                     "prev_page_accuracy": prev_acc,   # None on first page
                 },
-                page_history=page_history,             # DecisionCaller 内部会 append 当前页再判 policy
+                page_history=page_history,             # ⚠️ runner 自己负责 append 当前页(r6 必修)· DecisionCaller 不再内部 append
             )
 
             # ⚠️ 必须先判 final_disposition.type · Failure 路径可能没 payload
@@ -111,6 +117,8 @@ class V02SpikeRunner:
 
             # 此处保证 final_disposition.payload 有 accuracy(Continue / BoundaryReached / Hopeless 都填)
             curr_acc = decision_2.final_disposition.payload.get("accuracy")
+            # ⚠️ 唯一 append 点(r6 必修):runner 在 next iteration call 之前 append 当前页
+            # 下一轮 page_history 传入 DecisionCaller 时已含本页 · len ≥ 1
             page_history.append({"page": page, "accuracy": curr_acc})
             prev_acc = curr_acc
 

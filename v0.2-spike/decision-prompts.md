@@ -130,6 +130,7 @@ schema:
       minItems: 1
     why_not_top_alt:
       type: object
+      additionalProperties: false   # r6 必修 · 嵌套也 strict
       required: [audience_index, reason]
       properties:
         audience_index: { type: integer, enum: [1, 2, 3, 4, 0] }  # 0 = 不适用(chosen=null)
@@ -216,7 +217,7 @@ final_disposition:
   Failure:
     type: "Failure"
     payload: null             # ⚠️ 可能没 payload · runner 必须先判 type
-    failure_diagnostics: {...}
+    # failure_diagnostics 不在 disposition 内 · 在顶层 audit_entry.failure_diagnostics(见 § 4)
 ```
 
 ### 2.3 Prompt
@@ -309,9 +310,11 @@ def decide_per_page(parsed, inputs, page_history):
     ACCURATE_HIGH = 0.80
     BOUNDARY_LOW = 0.60
 
-    # ---- DecisionCaller 内部前置:append 当前页到 page_history(r3 #1 必修)
-    # page_history 在 call 时由 DecisionCaller 注入"含当前页" · runner stub 传入的是上一轮结束时的
-    # 所以下面 page_history 已含本页 · len ≥ 1(防 div0)
+    # ---- page_history 所有权(r6 必修 · 单一所有者)
+    # ⚠️ DecisionCaller **不再**内部 append · 改为 runner 在 call **之前** append 当前页
+    # runner stub:在 self.decision.call() 之前已 page_history.append({page, accuracy=<previous parse>})
+    # 故下面 page_history 包含当前页 · len ≥ 1(防 div0)
+    # 避免 runner + DecisionCaller 双 append 造成 cumulative_avg 偏差
 
     # ---- Hopeless 优先判 · 防 r2 #3 不可达 ----
     # 前 5 页累积平均 < BOUNDARY_LOW · 触发 hopeless(早期就垃圾)

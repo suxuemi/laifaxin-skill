@@ -40,12 +40,22 @@ run_smoke() {
     echo "--- prompt 结束 ---"
     echo ""
 
-    read -p "Codex 报告了什么? 输 'pass' / 'fail' / 'skip': " -r RESULT
+    read -p "Codex 报告了什么? 输 'pass' / 'stub_pass' / 'fail' / 'skip': " -r RESULT
     echo "[Smoke $idx] $name: $RESULT" >> "$SMOKE_LOG"
 
+    # r6 必修 · stub_pass 仅 W2 阶段允许 · smoke 3 controller 未实现时报告 "stub_pass"
+    if [ "$RESULT" = "stub_pass" ]; then
+        if [ "${V02_STAGE:-W2}" = "W2" ]; then
+            echo "⚠️ Smoke $idx stub_pass(W2 阶段允许 · W3 必须真 pass)"
+            return 0
+        else
+            echo "❌ W3 阶段不接受 stub_pass · 必须真 pass · 立即中止"
+            exit 1
+        fi
+    fi
     if [ "$RESULT" != "pass" ]; then
         echo "❌ Smoke $idx 未通过 · 立即中止 · 不要继续 W3"
-        exit 1   # r4 #1 · 不让脚本继续假阳性
+        exit 1
     fi
     echo "✓ Smoke $idx pass"
     return 0
