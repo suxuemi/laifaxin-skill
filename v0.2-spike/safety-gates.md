@@ -274,7 +274,9 @@ class TokenStore:
                 "VALUES (?, ?, ?, ?, ?, FALSE)",
                 ...
             )
-        return Token(token_id, sig, expires_at=now()+300)   # 5 min
+        # α.3 起从 effective_config 读 · 不再硬编码 300 秒
+        expire_seconds = effective_config["token_expire_minutes"] * 60   # default 5 min
+        return Token(token_id, sig, expires_at=now() + expire_seconds)
 
     def consume(self, token_id, action_id, canonical_payload) -> bool:
         # Atomic compare-and-swap

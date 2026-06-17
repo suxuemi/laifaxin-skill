@@ -28,6 +28,30 @@ description: Supervised browser spike (alpha) — ONLY for when user explicitly 
 - 任何不涉及"在来发信网页内实际操作"的诉求 → v0.1
 - 任何涉及"AI 评分 / 智能跟进激活 / 邮件群发"的诉求 → 永久 block(scope out)
 
+## § 0.5 · 启动对话:参数确认(每次 run 必跑 · alpha-α.3 起新增)
+
+> **r6/r5 后的产品级补充**(Tony 提案):skill 之前所有参数硬编码 · 用户改要 fork repo · 不实用。
+> 改为**对话式 override** · 整个 run 用 effective config · 不动 markdown。
+
+每次用户触发 v0.2 skill · Codex 必须:
+
+```
+1. 读 parameters-defaults.md
+2. 列出所有 `override_via: conversation` 参数 · 显示 defaults
+3. 问用户:"默认参数如上 · 这次跑要改哪些?(说'默认'直接跑)"
+4. 解析用户自然语言改动 → 结构化 override yaml
+5. 验证 constraints(range / hard_ceiling / frozen / 派生约束)
+6. 显示 effective config 给用户确认
+7. 写入 run.json.user_overrides · 整个 run 用 effective config
+```
+
+**强约束**(参 `parameters-defaults.md` § 5):
+- `permanently_blocked_actions` / `scope_out_modules` = **frozen** · 用户不可改
+- `token_expire_minutes` / `max_run_duration_minutes` 有 hard_ceiling · 用户可放宽但有上限
+- 派生约束自动 enforce(如 `boundary_low < boundary_high - 0.10`)
+
+**default canonical** 在 `parameters-defaults.md` · 本 SKILL 不重复列。
+
 ## § 1 · Scope(严格 · 不得越界)
 
 ```yaml
@@ -86,6 +110,12 @@ raw/prospecting/<product>/runs/<run_id>/            # 入 repo(跨设备审计)
 run_id: timestamp-slug-<n>             # 不是 Codex SESSION_ID(UUID)
 started_at / finished_at / duration_seconds
 result: success | failed | aborted | partial
+user_overrides:                        # § 0.5 启动对话产物(α.3 新增)
+  - { param, default, user_value, at, constraint_passed }
+effective_config:                      # default + overrides 合并后 · 整个 run 真正用的 config
+  boundary_high: 0.85                  # 若用户改了 · 否则填 default
+  emails_per_company: 7
+  # ... 全 § 1-7 参数
 inference:
   chosen_audience: { audience_index, audience_slug, name }
 sampling:
@@ -143,10 +173,11 @@ failure_diagnostics:                      # null if successful
 
 LLM agent 触发本 SKILL 后,**按顺序读**:
 
-1. `safety-gates.md`(本目录)— scope + 白名单 + token + 失败矩阵
-2. `decision-prompts.md`(本目录)— 3 LLM 节点 prompt + schema + decision policy
-3. `runners/README.md`(本目录)— runner 接口(W3 实施 · 当前 stub)
-4. `HOW-TO-START-SPIKE.md`(本目录)— 启动预飞 + 紧急停 + 反馈
+1. **`parameters-defaults.md`(本目录)— 启动对话需要(§ 0.5)· α.3 起首读**
+2. `safety-gates.md`(本目录)— scope + 白名单 + token + 失败矩阵
+3. `decision-prompts.md`(本目录)— 3 LLM 节点 prompt + schema + decision policy
+4. `runners/README.md`(本目录)— runner 接口(W3 实施 · 当前 stub)
+5. `HOW-TO-START-SPIKE.md`(本目录)— 启动预飞 + 紧急停 + 反馈
 
 ## § 7 · 关联
 

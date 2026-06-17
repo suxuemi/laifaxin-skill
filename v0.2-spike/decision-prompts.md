@@ -307,8 +307,9 @@ def decide_per_page(parsed, inputs, page_history):
     page = inputs.page_number
     prev = inputs.prev_page_accuracy   # = page_history[-2].accuracy if exist else None
 
-    ACCURATE_HIGH = 0.80
-    BOUNDARY_LOW = 0.60
+    # ⚠️ α.3 起从 effective_config 读 · 不再硬编码(parameters-defaults.md § 1)
+    ACCURATE_HIGH = effective_config["boundary_high"]        # default 0.80
+    BOUNDARY_LOW = effective_config["boundary_low"]          # default 0.60
 
     # ---- page_history 所有权(r6 必修 · 单一所有者)
     # ⚠️ DecisionCaller **不再**内部 append · 改为 runner 在 call **之前** append 当前页
@@ -445,9 +446,10 @@ cross_field_validation:
 ```python
 def decide_inquiry(parsed, inputs):
     # validate 已通过(上方 schema + cross_field)
-    INQUIRY_AUTO_THRESHOLD = 0.85   # auto-apply inquiry 标签
-    INQUIRY_FLAG_THRESHOLD = 0.55   # 召人工 · 不静默沉
-    NON_INQUIRY_AUTO_THRESHOLD = 0.85   # 其他标签 auto
+    # ⚠️ α.3 起从 effective_config 读(parameters-defaults.md § 1)
+    INQUIRY_AUTO_THRESHOLD = effective_config["llm_node_3_inquiry_auto_threshold"]   # default 0.85
+    INQUIRY_FLAG_THRESHOLD = effective_config["llm_node_3_inquiry_flag_threshold"]   # default 0.55
+    NON_INQUIRY_AUTO_THRESHOLD = effective_config["llm_node_3_inquiry_auto_threshold"]   # 与 inquiry auto 同
 
     p = parsed.candidate_tags
 
