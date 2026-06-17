@@ -9,7 +9,16 @@ tags: [v0.2, decision-prompts, llm-nodes, browser-agent, output-contract]
 description: v0.2 alpha 浏览器 agent 3 个 LLM 决策节点 · 输出 contract(合法 exemplar + schema 验证 + repair retry + fail-closed)+ 可验证决策条件(不靠 self-reported confidence)+ 统一 audit + failure_diagnostics · r1 deep-review 全面重写
 ---
 
-# Decision Prompts · v0.2 alpha(r1 deep-review 重写版)
+# Decision Prompts · v0.2 alpha(r1/r2/r3/r4 累积)
+
+> **Loader contract**(r4 必修):本文 markdown 含 5 类内容,**loader 都要解析**:
+> 1. ` ```yaml ` blocks → schema / disposition contracts
+> 2. ` ```python ` blocks → decision policy(`decide()` 函数体)
+> 3. 普通 prose code fence(无语言标识)→ LLM prompts(节点 1/2/3 的 prompt 文本)
+> 4. ` ```yaml audit_entry ` block → audit schema
+> 5. inline 字段引用(如 `prev_page_accuracy`) → input/output 字段名
+>
+> 故 `DecisionCaller.from_md_yaml_blocks()` 名字不准确 · **实际是 `from_md_sections()`** · 按段标题(§ 1.x / § 2.x / § 3.x)分发到对应节点。
 
 > **r1 deep-review 反馈**:原版 🔴 大改 · 12 条硬伤
 > 1) 伪 YAML 占位符 · LLM 抄不准 · 2) `confidence` 不是已测概率,降级为 audit 字段 · 3) 节点 2 阈值 0.7 与权威 docs ≥80% 冲突 · 4) 单页判 boundary 不稳 · 5) 节点 3 漏真询盘风险 · 6) audit 不闭环
@@ -137,9 +146,13 @@ def decide(parsed, inputs):
     if parsed.chosen not in [1, 2, 3, 4, None]:
         return Failure(reason="invalid chosen")
 
-    # 条件 B:applied_rules 至少 1 条 + evidence_snippets 至少 1 条
+    # 条件 B:applied_rules 至少 1 条 + evidence_snippets 至少 1 条 + r4 #4 hit validation
     if not parsed.applied_rules or not parsed.evidence_snippets:
         return Failure(reason="missing evidence/rules")
+    # r4 #4 · evidence 必须命中 inputs(防 LLM 编造)
+    candidates_text = " ".join(c.name + " " + c.recommend_reason for c in inputs.candidates)
+    if not any(snippet_keyword_in_text(snip, candidates_text) for snip in parsed.evidence_snippets):
+        return Failure(reason="evidence_snippets_no_input_hit")
 
     # 条件 C:why_not_top_alt 一致性(chosen=null 必须 audience_index=0)
     if parsed.chosen is None and parsed.why_not_top_alt.audience_index != 0:
@@ -178,7 +191,34 @@ inputs:
   prev_page_accuracy: 0.85   # 上一页 (page=60) 的 accuracy · None if page=1
 ```
 
-### 2.2 Prompt
+### 2.2 Disposition payload schema(r4 必修 · Continue/Hopeless/BoundaryReached 都填一致 accuracy)
+
+```yaml
+final_disposition:
+  Continue:
+    type: "Continue"
+    payload:
+      accuracy: 0.85          # 当前页 accuracy · 必填
+      note: "accurate"        # accurate / middle_zone_unstable / suspect_boundary_need_confirm
+  BoundaryReached:
+    type: "BoundaryReached"
+    payload:
+      accuracy: 0.50          # 触发边界的当前页 accuracy · 必填
+      at_page: 60             # 最后准页(= page - 2)
+      save_companies: 600     # at_page × 10
+  Hopeless:
+    type: "Hopeless"
+    payload:
+      accuracy: 0.30          # 当前页 accuracy · 必填
+      cumulative_avg: 0.28
+      reason: "cumulative_avg_low_in_first_5_pages"
+  Failure:
+    type: "Failure"
+    payload: null             # ⚠️ 可能没 payload · runner 必须先判 type
+    failure_diagnostics: {...}
+```
+
+### 2.3 Prompt
 
 ```
 You are an evaluator for outbound prospecting per-page accuracy.
@@ -202,11 +242,11 @@ total_rows: 10
 on_target_count: 5
 on_target_indices: [0, 2, 5, 7, 8]
 not_on_target_indices: [1, 3, 4, 6, 9]
-flagged_indices: [3, 6]  # 主营是同行(中国工厂)
+flagged_indices: [3, 6]
 accuracy: 0.50
 evidence_snippets:
-  - "row 0 description '亚洲食品零售 5000+ SKU' → 对路"
-  - "row 3 description '面条工厂江苏南京' → 同行 · flagged"
+  - "row 0 description 亚洲食品零售 5000+ SKU 对路"
+  - "row 3 description 面条工厂江苏南京 同行 flagged"
 ```
 
 ### 2.3 Output Schema

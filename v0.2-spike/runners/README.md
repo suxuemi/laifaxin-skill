@@ -52,8 +52,8 @@ class V02SpikeRunner:
         self.audit = AuditWriter(self.run_id)
         # safety-gates.md / decision-prompts.md 是文档+数据源(markdown 内嵌 yaml 块)
         # 加载方式:提取 fenced ```yaml 块 → 拼接 → schema validate
-        self.safety = SafetyEnforcer.from_md_yaml_blocks("safety-gates.md")
-        self.decision = DecisionCaller.from_md_yaml_blocks("decision-prompts.md")
+        self.safety = SafetyEnforcer.from_md_sections("safety-gates.md")
+        self.decision = DecisionCaller.from_md_sections("decision-prompts.md")
         self.browser = ComputerUsePlugin()  # ~/.codex/computer-use/
 
     async def run(self):
@@ -153,17 +153,17 @@ if __name__ == "__main__":
 
 ```python
 def test_blocked_action_raises():
-    enforcer = SafetyEnforcer.from_md_yaml_blocks("safety-gates.md")
+    enforcer = SafetyEnforcer.from_md_sections("safety-gates.md")
     with pytest.raises(SafetyError):
         enforcer.check_click(semantic="发送")   # 永久 block
 
 def test_guarded_action_requires_token():
-    enforcer = SafetyEnforcer.from_md_yaml_blocks("safety-gates.md")
+    enforcer = SafetyEnforcer.from_md_sections("safety-gates.md")
     with pytest.raises(SafetyError, match="No token"):
         enforcer.check_click(semantic="确认转化", token=None)
 
 def test_allowed_action_passes():
-    enforcer = SafetyEnforcer.from_md_yaml_blocks("safety-gates.md")
+    enforcer = SafetyEnforcer.from_md_sections("safety-gates.md")
     enforcer.check_click(semantic="搜索")   # no exception
 ```
 
@@ -172,7 +172,7 @@ def test_allowed_action_passes():
 ```python
 def test_llm_node_1_returns_one_audience():
     # contract 对齐 decision-prompts.md § 1.3 新 schema
-    caller = DecisionCaller.from_md_yaml_blocks("decision-prompts.md")
+    caller = DecisionCaller.from_md_sections("decision-prompts.md")
     result = caller.call("choose_audience", inputs={...})
     assert result.chosen in [1, 2, 3, 4, None]
     assert len(result.evidence_snippets) >= 1
@@ -182,7 +182,7 @@ def test_llm_node_1_returns_one_audience():
 
 def test_llm_node_2_boundary_detection():
     # contract 对齐 § 2.4 新 disposition · 不是 verdict enum 字符串
-    caller = DecisionCaller.from_md_yaml_blocks("decision-prompts.md")
+    caller = DecisionCaller.from_md_sections("decision-prompts.md")
     rows_high_match = [{"description": "We import LED outdoor lighting from China"} for _ in range(10)]
     result = caller.call("per_page_accuracy", inputs={"rows": rows_high_match, "prev_page_accuracy": 0.85, ...})
     assert result.final_disposition.type in ["Continue", "BoundaryReached", "Hopeless", "Failure"]
@@ -190,7 +190,7 @@ def test_llm_node_2_boundary_detection():
 
 def test_llm_node_2_two_page_boundary_calculation():
     # r2 #2 必修 · 双页连续 < 0.6 · boundary_page = page - 2(最后准页)
-    caller = DecisionCaller.from_md_yaml_blocks("decision-prompts.md")
+    caller = DecisionCaller.from_md_sections("decision-prompts.md")
     # 模拟第 62 页 · 当前 0.5 / 上一页(第 61) 0.5
     result = caller.call(
         "per_page_accuracy",

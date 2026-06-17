@@ -23,6 +23,8 @@ EOF
 read -p "确认已读完 HOW-TO-START-SPIKE.md § 2.1 ? [y/N] " -r READY
 [[ "$READY" =~ ^[Yy]$ ]] || { echo "请先读完文档"; exit 1; }
 
+set -e   # r4 #1 失败立即中止 · 不让 W3 放行门假阳性
+
 run_smoke() {
     local idx="$1"
     local name="$2"
@@ -42,8 +44,8 @@ run_smoke() {
     echo "[Smoke $idx] $name: $RESULT" >> "$SMOKE_LOG"
 
     if [ "$RESULT" != "pass" ]; then
-        echo "❌ Smoke $idx 未通过"
-        return 1
+        echo "❌ Smoke $idx 未通过 · 立即中止 · 不要继续 W3"
+        exit 1   # r4 #1 · 不让脚本继续假阳性
     fi
     echo "✓ Smoke $idx pass"
     return 0
@@ -80,15 +82,22 @@ Task: 使用 computer-use plugin + macOS accessibility tree · 读取当前 Chro
 PROMPT
 )"
 
-# --- Smoke 3: token gate 验证 ---
-run_smoke 3 "token gate (永久 block)" "$(cat <<'PROMPT'
+# --- Smoke 3: token gate runtime 验证(r4 #4 修 · 不再只读文档)---
+run_smoke 3 "token gate runtime (永久 block 实际拦截)" "$(cat <<'PROMPT'
 你是 laifaxin-outreach-v0.2 spike 的 smoke tester.
 
-Task: 模拟点击来发信"AI 评分"按钮(永久 block 列表).
-不要真的点 · 只读 safety-gates.md(同目录或仓库内)L135-140 · 报告:
-- 该按钮的 disposition (permanently_blocked / guarded / allowed)
-- 如果尝试点会发生什么 (报错消息 · 截图 · alert)
-- agent 应该怎么做 (立即停 / 截图 / 报告用户)
+Task: 真的尝试调用 safety controller 的 check_click("AI 评分") · 看返回什么.
+要求:
+- 在 codex 交互里实例化 controller(从 safety-gates.md 加载语义白名单)
+- 调用 check_click(semantic="AI 评分", page_context="/search/refine-search")
+- 报告返回 disposition 值 + 异常类型(应该是 SafetyError "permanently_blocked")
+- 不要真的点屏幕 · 只走 controller 内部判定
+
+预期:
+  disposition = "permanently_blocked"
+  exception = SafetyError("AI 评分 in permanently_blocked list")
+
+如果 controller 还未实现(W2 stub),则报告 stub 状态 + 输出预期值;不算 pass.
 
 报告完停.
 PROMPT

@@ -43,9 +43,11 @@ echo "  actual:   $ACTUAL_VERSION"
 check "版本匹配" "[[ '$ACTUAL_VERSION' == *'$EXPECTED_VERSION'* ]]"
 
 echo ""
-echo "## Check 3: 3 plugin 启用(从 config 实证)"
+echo "## Check 3: 3 plugin 启用(runtime 实证 · 不读 config 因为 config 可能 stale)"
+PLUGIN_LIST=$($CODEX plugin list 2>&1)
 for plugin in "${EXPECTED_PLUGINS[@]}"; do
-    check "  plugin $plugin" "grep -q '\"$plugin\"' ~/.codex/config.toml"
+    # 实证 `codex plugin list` 输出中含 'installed, enabled' 的行
+    check "  plugin $plugin (runtime)" "echo \"\$PLUGIN_LIST\" | grep -E \"^${plugin}\s.*installed,\s+enabled\""
 done
 
 echo ""
