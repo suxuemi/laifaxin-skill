@@ -220,18 +220,18 @@ llm_max_retries:
 ```
 1. Codex 读本文 · 列出所有 override_via: conversation 参数 + defaults
 2. Codex 问用户:"默认参数如上 · 这次跑要改哪些?(说'默认'直接跑)"
-3. 用户自然语言改:
+3. 用户自然语言改(r8 必修 · 删 sequence 残留):
    - "boundary 改 0.85/0.65"
    - "单家保存 7 邮箱"
-   - "跟进改成 1立 + 5d + 10d + 20d"
    - "promote 耗时减少阈值改 30%"
+   - "max_boundary_pages 改 80"
 4. Codex 解析成结构化 override:
    {
      "boundary_high": 0.85,
      "boundary_low": 0.65,
      "emails_per_company": 7,
-     "sequence_intervals_days": [0, 5, 10, 20],
-     "promote_duration_reduction_pct": 30
+     "promote_duration_reduction_pct": 30,
+     "max_boundary_pages": 80
    }
 5. 验证 constraints:
    - boundary_low MUST < boundary_high - 0.10 ✓

@@ -213,6 +213,7 @@ final_disposition:
       accuracy: 0.50          # 触发边界的当前页 accuracy · 必填
       at_page: 60             # 最后准页(= page - 2)
       save_companies: 600     # at_page × 10
+      note: "two_consecutive_low_pages_confirm"   # r8 必修 · 加 note 到 schema
   Hopeless:
     type: "Hopeless"
     payload:
@@ -325,7 +326,8 @@ def decide_per_page(parsed, inputs, page_history):
     # 字段名:Continue/Hopeless/BoundaryReached 都填 accuracy · Hopeless 用 cumulative_avg(不是 avg)
     # ---- Hopeless 优先判 · 防 r2 #3 不可达 ----
     if len(page_history) > 0 and len(page_history) <= 5:
-        cumulative_avg = sum(p.accuracy for p in page_history) / len(page_history)
+        # r8 必修 · page_history 元素是 dict {"page": int, "accuracy": float}
+        cumulative_avg = sum(p["accuracy"] for p in page_history) / len(page_history)
         if cumulative_avg < BOUNDARY_LOW:
             return Hopeless(
                 accuracy=current,

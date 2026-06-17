@@ -51,15 +51,14 @@ class V02SpikeRunner:
         self.run_id = generate_run_id()    # ts + uuid
         self.audit = AuditWriter(self.run_id)
         # safety-gates.md / decision-prompts.md 是文档+数据源(markdown 多类内容)
-        # 加载方式: from_md_sections 按 § 段标题分发 · 解析:
-        #   1) ```yaml 块 → schemas/configs
-        #   2) ```python 块 → policy functions
-        #   3) 无语言 prose fences → LLM prompts(节点 1/2/3)
-        #   4) ```yaml audit_entry 段 → audit schema
-        #   5) inline 字段引用 → 验证 field names
-        # ⚠️ 不是简单"提取所有 yaml 拼接" · 必须按段分发(decision-prompts.md § 0 已说明)
+        # 加载方式: from_md_sections 按 § 段标题分发 · 解析 5 类内容(详见 decision-prompts.md § 0)
         self.safety = SafetyEnforcer.from_md_sections("safety-gates.md")
         self.decision = DecisionCaller.from_md_sections("decision-prompts.md")
+        # r8 必修 · effective_config 唯一加载路径(parameters-defaults defaults + user_overrides)
+        self.params_defaults = load_parameters_defaults("parameters-defaults.md")
+        self.effective_config = self.params_defaults.copy()    # 默认值
+        # 启动对话流程后 · runner 调 self.decision.set_effective_config(self.effective_config)
+        # safety 同样需要 · self.safety.set_effective_config(self.effective_config)
         self.browser = ComputerUsePlugin()  # ~/.codex/computer-use/
 
     async def run(self):
@@ -204,26 +203,43 @@ def test_llm_node_1_returns_one_audience():
     # ⚠️ 不再 assert confidence / reasoning · r1/r2 已降级为 audit 字段(不参与决策门)
 
 def test_llm_node_2_boundary_detection():
-    # contract 对齐 § 2.4 新 disposition · 不是 verdict enum 字符串
+    # r8 必修 · 分两步:eval_node 拿 accuracy → append history → run_policy
     caller = DecisionCaller.from_md_sections("decision-prompts.md")
+    caller.set_effective_config({...})  # 从 parameters-defaults 加载 + user overrides
     rows_high_match = [{"description": "We import LED outdoor lighting from China"} for _ in range(10)]
-    result = caller.call("per_page_accuracy", inputs={"rows": rows_high_match, "prev_page_accuracy": 0.85, ...})
+
+    parse = caller.eval_node("per_page_accuracy", inputs={"rows": rows_high_match, ...}, effective_config=caller.effective_config)
+    assert 0.0 <= parse.parsed["accuracy"] <= 1.0
+
+    page_history = [{"page": 1, "accuracy": parse.parsed["accuracy"]}]
+    result = caller.run_policy("per_page_accuracy", parsed=parse.parsed,
+                                inputs={"page_number": 1, "prev_page_accuracy": None},
+                                page_history=page_history, effective_config=caller.effective_config)
     assert result.final_disposition.type in ["Continue", "BoundaryReached", "Hopeless", "Failure"]
-    # r5 #1 修 · accuracy 在 final_disposition.payload · 不是 result.payload
-    assert 0.0 <= result.final_disposition.payload["accuracy"] <= 1.0
+    # Failure.payload 可能 null · 必须先判 type
+    if result.final_disposition.type != "Failure":
+        assert 0.0 <= result.final_disposition.payload["accuracy"] <= 1.0
 
 def test_llm_node_2_two_page_boundary_calculation():
     # r2 #2 必修 · 双页连续 < 0.6 · boundary_page = page - 2(最后准页)
     caller = DecisionCaller.from_md_sections("decision-prompts.md")
+    caller.set_effective_config({...})
     # 模拟第 62 页 · 当前 0.5 / 上一页(第 61) 0.5
-    result = caller.call(
+    page_history = [{"page": p, "accuracy": 0.85} for p in range(1, 61)] + \
+                   [{"page": 61, "accuracy": 0.5}, {"page": 62, "accuracy": 0.5}]
+    # parse 已 mock · 直接跑 policy
+    parsed = {"accuracy": 0.5, ...}
+    result = caller.run_policy(
         "per_page_accuracy",
-        inputs={"page_number": 62, "rows": [...], "prev_page_accuracy": 0.5, ...},
-        page_history=[{"page": p, "accuracy": 0.85} for p in range(1, 61)] + [{"page": 61, "accuracy": 0.5}],
+        parsed=parsed,
+        inputs={"page_number": 62, "prev_page_accuracy": 0.5},
+        page_history=page_history,
+        effective_config=caller.effective_config,
     )
     assert result.final_disposition.type == "BoundaryReached"
-    assert result.final_disposition.payload["at_page"] == 60   # page - 2 · 最后准页是第 60 页
+    assert result.final_disposition.payload["at_page"] == 60
     assert result.final_disposition.payload["save_companies"] == 600
+    assert result.final_disposition.payload["note"] == "two_consecutive_low_pages_confirm"
 ```
 
 ## W3 启动前需补全

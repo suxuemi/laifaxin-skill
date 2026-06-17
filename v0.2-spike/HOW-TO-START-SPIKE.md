@@ -295,7 +295,7 @@ raw/prospecting/<product>/runs/<run_id>/
 
 > 现行 `wiki/history/2026-06-laifa-browser-agent-v0.2-design.md` 是设计阶段总结 · 不是 run log。
 
-### 6.3 5 次连续 success run · alpha → beta promote(对齐 spec § 11.1 #5)
+### 6.3 N 次连续 success run · alpha → beta promote(N 从 effective_config 读)
 
 每周汇总 `raw/prospecting/*/runs/*/run.json`(自动脚本可选):
 
