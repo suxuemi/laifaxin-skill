@@ -55,7 +55,7 @@ run_smoke 1 "computer-use 截图" "$(cat <<'PROMPT'
 
 Task: 使用 computer-use plugin 截图当前 Chrome 活跃 tab.
 要求报告:
-- 用了哪个 plugin (browser-use / computer-use)
+- 用了哪个 plugin (computer-use / chrome)
 - 截图 path
 - 截图分辨率
 - 截图中文本"AI 数据库" / "AI 推演" 是否可见

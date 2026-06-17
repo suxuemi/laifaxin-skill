@@ -7,7 +7,7 @@ set -uo pipefail
 
 CODEX=/Applications/Codex.app/Contents/Resources/codex
 EXPECTED_VERSION="0.140.0-alpha.2"
-EXPECTED_PLUGINS=("browser@openai-bundled" "browser-use@openai-bundled" "computer-use@openai-bundled")
+EXPECTED_PLUGINS=("browser@openai-bundled" "chrome@openai-bundled" "computer-use@openai-bundled")
 
 PASS=0
 FAIL=0

@@ -54,7 +54,15 @@ inputs:
       dead_reason: "已死客群无回复"
 ```
 
-### 1.2 Prompt(中文 · 紧)
+### 1.2 Prompt(中文 · 紧)· 全节点共通 strict rules
+
+> **全节点 strict output rules**(节点 1/2/3 都遵守):
+> - Return raw YAML.
+> - NO code fences (no ```).
+> - NO comments anywhere (no `#`).
+> - NO placeholder syntax like `<...>`.
+> - Output exactly ONE YAML document matching the schema.
+> - Match schema EXACTLY (no extra keys, no missing required keys).
 
 ```
 You are a foreign-trade prospecting strategist for laifa.xin.
@@ -222,6 +230,7 @@ schema:
       type: array
       items: { type: integer, minimum: 0, maximum: 9 }
       uniqueItems: true
+      # 必须是 not_on_target_indices 的子集(r2 #D2.2 修)
     accuracy: { type: number, minimum: 0, maximum: 1 }
     evidence_snippets:
       type: array
@@ -233,6 +242,7 @@ cross_field_validation:
   - len(on_target_indices) + len(not_on_target_indices) == total_rows
   - intersection(on_target_indices, not_on_target_indices) == []
   - accuracy == on_target_count / total_rows
+  - set(flagged_indices).issubset(set(not_on_target_indices))   # r2 #D2.2 子集约束
 ```
 
 ### 2.4 Decision Policy · 双页连续跌破 + 80% 对齐(r1 + r2 必修)
@@ -250,9 +260,13 @@ def decide_per_page(parsed, inputs, page_history):
     ACCURATE_HIGH = 0.80
     BOUNDARY_LOW = 0.60
 
+    # ---- DecisionCaller 内部前置:append 当前页到 page_history(r3 #1 必修)
+    # page_history 在 call 时由 DecisionCaller 注入"含当前页" · runner stub 传入的是上一轮结束时的
+    # 所以下面 page_history 已含本页 · len ≥ 1(防 div0)
+
     # ---- Hopeless 优先判 · 防 r2 #3 不可达 ----
     # 前 5 页累积平均 < BOUNDARY_LOW · 触发 hopeless(早期就垃圾)
-    if len(page_history) <= 5:
+    if len(page_history) > 0 and len(page_history) <= 5:
         cumulative_avg = sum(p.accuracy for p in page_history) / len(page_history)
         if cumulative_avg < BOUNDARY_LOW:
             return Hopeless(reason="cumulative_avg_low_in_first_5_pages",
@@ -359,6 +373,7 @@ schema:
     candidate_tags:
       type: object
       required: [inquiry, ooo, referral, rejection, neutral]
+      additionalProperties: false   # r2 #D2.3 硬约束 · 严禁第 6 个 key
       properties:
         inquiry: { type: number, minimum: 0, maximum: 1 }
         ooo: { type: number, minimum: 0, maximum: 1 }

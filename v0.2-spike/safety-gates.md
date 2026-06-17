@@ -6,7 +6,7 @@ version: 0.2.0-alpha.2
 created: 2026-06-17
 updated: 2026-06-17
 tags: [v0.2, safety, browser-agent, codex, scope-restricted, executor-path]
-description: v0.2 alpha 浏览器 agent 安全闸 yaml 配置 · r1 deep-review 全面重写 · scope 严格收缩到"搜客+翻页+保存"· sequence/template/AI 评分整模块永久 block · primitive 区分 browser-use vs computer-use 双路 · controller 级 token 原子消费(待 W3 落地)
+description: v0.2 alpha 浏览器 agent 安全闸 yaml 配置 · r1 deep-review 全面重写 · scope 严格收缩到"搜客+翻页+保存"· sequence/template/AI 评分整模块永久 block · primitive 区分 chrome vs computer-use 双路 · controller 级 token 原子消费(待 W3 落地)
 ---
 
 # Safety Gates · v0.2 alpha(r1 + r2 deep-review 重写版)
@@ -27,7 +27,7 @@ description: v0.2 alpha 浏览器 agent 安全闸 yaml 配置 · r1 deep-review 
 >
 > **重写策略**:
 > 1. **收 scope** · alpha 只做"搜客+翻页+保存" · 其他模块整体永久 block
-> 2. **二分执行路** · browser-use(有 URL/title/accessibility)vs computer-use(看图 + accessibility text)
+> 2. **二分执行路** · chrome(有 URL/title/accessibility)vs computer-use(看图 + accessibility text)
 > 3. **删伪 primitive** · 改"拟议实现 · W3 落地"
 > 4. **controller 级原子规则** · single-controller + sqlite store + HMAC token
 
@@ -54,16 +54,19 @@ alpha_scope:
 
 ## § 1 · Executor 路二选一
 
-> **r1 #D3.2**:`browser-use` 和 `computer-use` 不是同一执行器 · 公开 API 不同。
+> **r1 #D3.2**:`chrome` 和 `computer-use` 不是同一执行器 · 公开 API 不同。
 
-| 路 | API 真实可用性 | 使用场景 |
+| 路 | 实证(codex plugin list) | 使用场景 |
 |---|---|---|
-| **computer-use** | ✅ 有 `screenshot` / macOS accessibility tree / `action`(点击/输入) | **主路** · Tony § 0 #4 不加 data-test-id · DOM 不稳 · 看屏幕更可靠 |
-| **browser-use** | ⚠️ 有 `url()` / `title()` / DOM `accessibility_tree` · 但**没 stable selector**(Tony § 0 #4) | 兜底 · 用 URL/title 给 computer-use 做页面状态判断辅助 |
+| **computer-use@openai-bundled** | ✅ installed, enabled · 有 `screenshot` / macOS accessibility / `action` | **主路 · 唯一执行器** · Tony § 0 #4 不加 data-test-id · 看屏幕 + macOS a11y 是唯一稳定方案 |
+| **chrome@openai-bundled** | ✅ installed, enabled · Chrome tab 管理 / URL / 状态查询 | 辅助 · 仅做页面上下文判断(URL / tab 状态)· 不做点击 |
+| **browser@openai-bundled** | ✅ installed, enabled · 通用浏览器原语 | 不在 alpha 主路 |
+| ~~chrome@openai-bundled~~ | 🔴 **不存在**(`~/.codex/config.toml` 旧配置 · `plugin list` 已无此 plugin) | 删除所有依赖 |
 
-**关键决定(对齐 spec § 1.4 + SKILL.md)**:
-- alpha 主路用 **computer-use**(看像素 + macOS a11y · 不依赖 DOM selector)· 跟 spec § 0 #4 一致
-- browser-use 仅做辅助:用 `url()` / `title()` 给 computer-use 提供页面上下文判断 · 不做主点击执行
+**关键决定(架构修正后)**:
+- alpha 主路:**computer-use 单路点击 + 看图 + macOS a11y**
+- chrome plugin 辅助:**仅查 URL / tab title** 给 scope-out 检测做上下文判断
+- ⚠️ 不再依赖 `chrome` 任何能力(plugin 不存在)
 
 ## § 2 · 白名单(scope 内 · 按真实按钮文案)
 
@@ -95,13 +98,22 @@ allowed_button_semantics:
 guarded_actions:
   - action_id: confirm_save_contacts
     button_semantics: ["确认转化", "确认保存"]    # r1 #D2.1 真实文案 · 不是"确定"
-    page_route: "/search/refine-search OR /search/customer-list"
+    page_routes:                                  # r3 #2 结构化 · 不用 OR 字符串
+      - "/search/refine-search"
+      - "/search/customer-list"
     modal_indicator:                                 # 多重证据 · 不靠单一 URL
       heading_contains: ["保存联系人", "确认转化"]
       form_field_present: ["公司标签", "联系人标签"]
     required_token: true
-    pre_action_budget_check:                        # 提交前预算预演
-      - sample_estimate_via: read_modal "选择前 [N] 条数据" + 邮箱单价
+    budget_estimate:                              # r3 #2 结构化字段
+      selected_count_source:
+        type: read_modal_field
+        field_label: "选择前 [N] 条数据"
+        value_extractor: "数字"
+      unit_price_source:
+        type: constant
+        value: 1.0                                # 1 邮箱 = 1 点
+      formula: "selected_count × emails_per_company × unit_price"
 ```
 
 ### 2.3 Permanently Blocked(scope 外 · 任何情况不点)
@@ -217,7 +229,7 @@ state_rules:
               ┌────────────┴─────────────┐
               ▼                          ▼
      ┌──────────────┐          ┌──────────────┐
-     │ browser-use  │          │ computer-use │
+     │ chrome  │          │ computer-use │
      │ executor     │          │ executor     │
      └──────────────┘          └──────────────┘
 ```
@@ -282,7 +294,7 @@ def safe_click(button_target, run_ctx):
     screenshot = await computer_use.screenshot()
 
     # 2. 主路 computer-use + macOS a11y · 看屏幕优先(对齐 § 1 主路 = computer-use)
-    #    辅助路 browser-use 提供 url/title(若可用)
+    #    辅助路 chrome 提供 url/title(若可用)
     page_url = None
     page_title = None
     if browser_use_available():
@@ -295,14 +307,17 @@ def safe_click(button_target, run_ctx):
     macos_a11y = await computer_use.accessibility_tree()  # macOS 系统级 a11y(主)
     button_node = locate_by_accessibility(macos_a11y, button_target)
 
+    # actuation_target 记录最终点击用什么(coords or a11y node) · r3 #1 必修
     if button_node and button_node.text:
         text = button_node.text                            # 主路成功:a11y 拿到按钮文本
         confidence = 0.95
+        actuation_target = ("a11y_node", button_node)      # 用 a11y node 点击(更稳)
     else:
-        # 兜底:看截图 + LLM 推理按钮文本
-        text, confidence = await llm_extract_button_text(screenshot, button_target)
-        if confidence < 0.85:
-            return Fail("computer-use button text low confidence", screenshot)
+        # 兜底:看截图 + LLM 推理按钮文本 + 推理可点击坐标
+        text, confidence, coords = await llm_extract_button_text_and_coords(screenshot, button_target)
+        if confidence < 0.85 or coords is None:
+            return Fail("computer-use button text or coords low confidence", screenshot)
+        actuation_target = ("coords", coords)              # 用屏幕坐标点击
 
     # 后续 page_url / page_title / macos_a11y 可为 None · matchers 必须接受 None
     a11y_tree = macos_a11y                                 # 统一变量名 · 给 § 5 后续 step 用
@@ -383,14 +398,14 @@ synonym_map:
 | 项 | 当前状态 | W3 实测 SOP |
 |---|---|---|
 | `computer-use` 是否原生 OCR | ⚠️ 公开面只有 screenshot / a11y / action · 未见 OCR primitive | W3 spike:试用 vision API · 看是否能直接读屏文本 |
-| `browser-use` `url() / title()` | ⚠️ 文档暗示有 · 未在本会话实证调用 | W3 spike:`codex exec` 让 Codex 调 browser-use plugin 跑 hello-world |
+| `chrome` `url() / title()` | ⚠️ 文档暗示有 · 未在本会话实证调用 | W3 spike:`codex exec` 让 Codex 调 chrome plugin 跑 hello-world |
 | `SkyComputerUseClient.app` Y/N callback API | ⚠️ 二进制内有 `approvalStore / approval_requested` 字符串 · 但公开 contract 未坐实 | W3 spike:让 Codex 发起一次 approval · 看 callback 真实 schema |
 | `accessibility_tree` 获取方式 | ⚠️ 推测有 · 未实证 | W3 spike:跑 hello-world |
 | controller-process 与 Codex orchestration 的 IPC | ⚠️ 拟议 single-controller + sqlite + file lock | W3 写 controller stub · 跑 multi-agent 并发测 token 唯一 |
 
 ## § 9 · 一句话总结(对齐 v0.1 风格)
 
-**Alpha scope 严格收缩到搜客+保存 · 其他全 block · 白名单制 + curated synonym + controller-owned token + state rules + computer-use 主路(macOS a11y + screenshot)+ browser-use 辅助(URL/title 上下文)· 关键 primitive 待 W3 坐实**
+**Alpha scope 严格收缩到搜客+保存 · 其他全 block · 白名单制 + curated synonym + controller-owned token + state rules + computer-use 主路(macOS a11y + screenshot)+ chrome 辅助(URL/title 上下文)· 关键 primitive 待 W3 坐实**
 
 ## § 10 · 关联
 

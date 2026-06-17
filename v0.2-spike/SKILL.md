@@ -53,10 +53,10 @@ out_of_scope:                       # 任何操作 = 立即 stop + alert
 | # | 铁律 | 详细位置 |
 |---|---|---|
 | 1 | **用户在场监控** · 用户必须能随时介入 / 终止 run(不要求 Chrome 前台 · 但要求用户 watching) | spec § 2.1 |
-| 2 | **scope 越界 = 立即 stop + alert** · 进入 § 1 out_of_scope 模块的 URL / 页面 → fail-closed | safety-gates.md § 0 + 状态机 |
+| 2 | **scope 越界 = 立即 stop + alert** · 进入 § 1 out_of_scope 模块的 URL / 页面 → fail-closed · URL 判定 best-effort(`chrome.url()` W3 未坐实 · 用 a11y page heading / breadcrumb 兜底)| safety-gates.md § 0 + 状态机 |
 | 3 | **危险按钮(发送 / 激活 / 删除 / 导出 / 黑名单 / AI 评分 / 插入变量 / 创建模板 等)永久 block** · 不接受 token 也不点 | safety-gates.md § 2.3 + § 3 |
 | 4 | **Guarded 动作(保存联系人 / 确认转化)必须 one-time token** · 5 分钟过期 · abandoned 5 分钟无响应 = pause + 等人工 resume · revoked 用户取消 | safety-gates.md § 4 |
-| 5 | **登录失效 / 验证码 / 反爬迹象 / 权限弹窗 = pause + alert** · 不得自动 retry / 自动恢复 / 自动绕过 | safety-gates.md § 7 失败矩阵 |
+| 5 | **登录失效 / 验证码 / 反爬迹象 / 权限弹窗 = pause + alert** · 不得自动 retry / 自动恢复 / 自动绕过 | HOW-TO-START-SPIKE.md § 4.3 状态机 + safety-gates.md § 7 失败矩阵 |
 
 > **r1 deep-review 反馈**:
 > - 删旧"完整性铁律"(过宽 + 跟 spec § 4 完整性约束重复)
@@ -94,7 +94,7 @@ raw/prospecting/<product>/runs/<run_id>/            # 入 repo(跨设备审计)
    - 0.60 ~ 0.80 中间区 → 翻下一页(不停)
    - 当前 < 0.60 且 上一页 ≥ 0.60 → 翻下一页确认(单页不判 boundary)
    - **双页连续 < 0.60 → boundary 确认**(此即"精度边界")
-6. 保存范围 = (boundary_page - 1) × 10 公司 × 5-10 邮箱/家(按 decision-prompts § 2 计算)
+6. 保存范围 = **boundary_page × 10** 公司 × 5-10 邮箱/家(对齐 decision-prompts.md § 2.4 canonical · `boundary_page` 已是"最后准页" · 不再 -1)
 7. Confirm 闸 2:用户签发 one-time token(预算预演:估算总邮箱数 × 单价)
 8. 执行保存 → 写回 run.json + summary.md + artifacts.json
 9. 完成 · 用户 review
@@ -107,9 +107,9 @@ raw/prospecting/<product>/runs/<run_id>/            # 入 repo(跨设备审计)
 
 ## § 5 · Executor 路(对齐 safety-gates.md § 1 + spec § 1.4)
 
-- **主路**:`computer-use@openai-bundled` plugin(看屏幕 + macOS accessibility tree)· Tony § 0 #4 不加 DOM data-test-id · 看像素更稳
-- **辅助路**:`browser-use@openai-bundled` plugin · 用 `url()` / `title()` 给 computer-use 提供页面上下文判断
-- **不用**:`browser@openai-bundled`(更基础 · 当前不依赖)
+- **主路**:`computer-use@openai-bundled` plugin(看屏幕 + macOS a11y + action)· 实查 `codex plugin list` installed, enabled
+- **辅助路**:`chrome@openai-bundled` plugin(仅查 URL / tab title)· 实查 installed, enabled
+- **⚠️ 架构修正**:之前 spec / safety-gates 写的 `browser-use@openai-bundled` **不存在**(plugin list 无此 plugin · `~/.codex/config.toml` 是过时配置)· 已删除所有依赖
 
 ## § 6 · 触发后必须先读的文件(顺序)
 

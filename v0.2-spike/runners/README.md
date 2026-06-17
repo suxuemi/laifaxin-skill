@@ -83,10 +83,13 @@ class V02SpikeRunner:
         await self.safety.safe_click(semantic="立即查看", index=chosen)
 
         # 5. 翻页 sequential + LLM 节点 2(每页)· 对齐 decision-prompts.md § 2.4 新 contract
-        page_history = []
+        #    page_history 时机:DecisionCaller **内部**先 append 当前页 + accuracy,再跑 decision policy
+        #    所以 stub 内 page_history 反映"截至上一页"· DecisionCaller 入参也含 prev_page_accuracy
+        page_history = []   # 累积"已 decide 完"的历史(不含正在 decide 的当前页)
         prev_acc = None
         boundary_page = None
-        for page in range(1, 1000):   # 安全上限
+        chosen_audience_id = chosen   # chosen 是 audience_index 整数 · LLM 节点 1 输出
+        for page in range(1, 1000):
             rows = await self.read_current_page()
             decision_2 = await self.decision.call(
                 node="per_page_accuracy",
@@ -94,24 +97,28 @@ class V02SpikeRunner:
                     "page_number": page,
                     "rows": rows,
                     "product_positioning": self.product,
-                    "audience_context": chosen,
+                    "audience_context": {"audience_id": chosen_audience_id},   # 结构化 · 不传整数
                     "cumulative_pages_read": page,
-                    "prev_page_accuracy": prev_acc,    # r2 #5 必修 · 双页确认需要
+                    "prev_page_accuracy": prev_acc,   # None on first page
                 },
-                page_history=page_history,             # 全 history 给 hopeless 累积平均判断
+                page_history=page_history,             # DecisionCaller 内部会 append 当前页再判 policy
             )
-            page_history.append({"page": page, "accuracy": decision_2.payload.get("accuracy")})
-            prev_acc = decision_2.payload.get("accuracy")
 
-            # decision_2.final_disposition.type ∈ {Continue, BoundaryReached, Hopeless, Failure}
+            # ⚠️ 必须先判 final_disposition.type · Failure 路径可能没 payload
             disp_type = decision_2.final_disposition.type
+            if disp_type == "Failure":
+                return await self.handle_fail_closed(decision_2)   # 先于 payload 读取
+
+            # 此处保证 final_disposition.payload 有 accuracy(Continue / BoundaryReached / Hopeless 都填)
+            curr_acc = decision_2.final_disposition.payload.get("accuracy")
+            page_history.append({"page": page, "accuracy": curr_acc})
+            prev_acc = curr_acc
+
             if disp_type == "BoundaryReached":
-                boundary_page = decision_2.final_disposition.payload["at_page"]    # 已是"最后准页"
+                boundary_page = decision_2.final_disposition.payload["at_page"]   # 已是"最后准页"
                 break
             elif disp_type == "Hopeless":
                 return await self.handle_repick()
-            elif disp_type == "Failure":
-                return await self.handle_fail_closed(decision_2)
             else:   # Continue
                 await self.safety.safe_click(semantic="下一页")
 
@@ -146,17 +153,17 @@ if __name__ == "__main__":
 
 ```python
 def test_blocked_action_raises():
-    enforcer = SafetyEnforcer.from_yaml("safety-gates.md")
+    enforcer = SafetyEnforcer.from_md_yaml_blocks("safety-gates.md")
     with pytest.raises(SafetyError):
         enforcer.check_click(semantic="发送")   # 永久 block
 
 def test_guarded_action_requires_token():
-    enforcer = SafetyEnforcer.from_yaml("safety-gates.md")
+    enforcer = SafetyEnforcer.from_md_yaml_blocks("safety-gates.md")
     with pytest.raises(SafetyError, match="No token"):
         enforcer.check_click(semantic="确认转化", token=None)
 
 def test_allowed_action_passes():
-    enforcer = SafetyEnforcer.from_yaml("safety-gates.md")
+    enforcer = SafetyEnforcer.from_md_yaml_blocks("safety-gates.md")
     enforcer.check_click(semantic="搜索")   # no exception
 ```
 
@@ -197,7 +204,7 @@ def test_llm_node_2_two_page_boundary_calculation():
 
 ## W3 启动前需补全
 
-- [ ] Codex `browser-use` / `computer-use` plugin 实际 API 文档(spike 时查)
+- [ ] Codex `computer-use` / `chrome` plugin 实际 API 文档(spike 时查 · `browser-use` 已确认不存在 · 删除)
 - [ ] OCR 工具选型(Codex 已含还是外接 tesseract?)
 - [ ] 同义词词典初版(`safety-gates.md` § 1 已列 · 但归一化逻辑要实现)
 - [ ] 用户 token 通知 UI 接入(SkyComputerUseClient.app 接口)
