@@ -41,16 +41,17 @@ inputs:
   product_positioning: "用户输入的产品定位 1-2 段"
   candidates:
     - audience_index: 1
-      name: "客群名"
-      recommend_reason: "推演给的理由"
+      audience_slug: "north-america-asian-food-distributor"   # r2 #1 必修 · 给比对用
+      name: "北美亚洲食品分销商"
+      recommend_reason: "..."
       coverage_estimate: 5000
-      # 推演自带的 confidence(若有 · 不强制)
       laifaxin_score: 0.82
-    - { audience_index: 2, ... }
+    - { audience_index: 2, audience_slug: "...", name: "...", ... }
     - { audience_index: 3, ... }
     - { audience_index: 4, ... }
   historical_dead_audiences:
-    - { audience_slug: "north-america-led-distributor", dead_reason: "已死客群无回复" }
+    - audience_slug: "north-america-led-distributor"          # 唯一标识
+      dead_reason: "已死客群无回复"
 ```
 
 ### 1.2 Prompt(中文 · 紧)
@@ -136,9 +137,14 @@ def decide(parsed, inputs):
     if parsed.chosen is None and parsed.why_not_top_alt.audience_index != 0:
         return Failure(reason="inconsistent why_not_top_alt")
 
-    # 条件 D:chosen 是 historical_dead 中的客群 → 拒绝
-    if parsed.chosen in [audience for audience in inputs.historical_dead_audiences]:
-        return Failure(reason="chosen overlaps dead audiences")
+    # 条件 D:chosen 对应的 audience_slug 在 historical_dead 中 → 拒绝(r2 #1 必修)
+    if parsed.chosen is not None:
+        chosen_candidate = next((c for c in inputs.candidates if c.audience_index == parsed.chosen), None)
+        if chosen_candidate is None:
+            return Failure(reason="chosen index not in candidates")
+        dead_slugs = {h.audience_slug for h in inputs.historical_dead_audiences}
+        if chosen_candidate.audience_slug in dead_slugs:
+            return Failure(reason="chosen audience_slug overlaps dead audiences")
 
     return Success(audience_id=parsed.chosen)
 ```
@@ -229,39 +235,54 @@ cross_field_validation:
   - accuracy == on_target_count / total_rows
 ```
 
-### 2.4 Decision Policy · 双页连续跌破 + 80% 对齐(r1 #D3.1-3.2 必修)
+### 2.4 Decision Policy · 双页连续跌破 + 80% 对齐(r1 + r2 必修)
 
 ```python
-def decide_per_page(parsed, inputs):
-    # validate 已通过(上方 schema + cross_field)
+def decide_per_page(parsed, inputs, page_history):
+    """
+    page_history: list of {page: int, accuracy: float}  # 截至当前的所有页历史
+    r2 #2-3 必修:boundary 计算 + hopeless 分支可达
+    """
     current = parsed.accuracy
-    prev = inputs.prev_page_accuracy   # None if page=1
+    page = inputs.page_number
+    prev = inputs.prev_page_accuracy   # = page_history[-2].accuracy if exist else None
 
-    # ≥80% threshold(对齐 docs 权威 · 见 spec § 3.3 #G4)
-    ACCURATE_HIGH = 0.80   # 准
-    BOUNDARY_LOW = 0.60    # 跌破 = 边界候选(放宽 · 双页确认)
+    ACCURATE_HIGH = 0.80
+    BOUNDARY_LOW = 0.60
 
-    # 条件 1:当前页 ≥ ACCURATE_HIGH → 继续翻
+    # ---- Hopeless 优先判 · 防 r2 #3 不可达 ----
+    # 前 5 页累积平均 < BOUNDARY_LOW · 触发 hopeless(早期就垃圾)
+    if len(page_history) <= 5:
+        cumulative_avg = sum(p.accuracy for p in page_history) / len(page_history)
+        if cumulative_avg < BOUNDARY_LOW:
+            return Hopeless(reason="cumulative_avg_low_in_first_5_pages",
+                            avg=cumulative_avg)
+
+    # ---- Continue 准 ----
     if current >= ACCURATE_HIGH:
-        return Continue(direction="next_page")
+        return Continue(direction="next_page", note="accurate")
 
-    # 条件 2:当前页 < BOUNDARY_LOW · 且上一页也 < BOUNDARY_LOW → boundary 确认
+    # ---- Boundary 双页确认 · 计算正确(r2 #2 必修)----
+    # 双页连续 < BOUNDARY_LOW · "boundary 在第一个低页之前"
+    # page-1 = 第一个低页 / page = 第二个低页(当前)
+    # 所以 boundary = page - 2(最后一个准页) · 保存范围 = page_history[boundary] 累积
     if current < BOUNDARY_LOW and (prev is not None and prev < BOUNDARY_LOW):
-        return BoundaryReached(at_page=inputs.page_number - 1)  # 最后一个"准"页
+        boundary_page = page - 2   # 最后一个"准"页 · 双页连续低之前一页
+        return BoundaryReached(
+            at_page=boundary_page,
+            save_companies=boundary_page * 10,
+            note="two_consecutive_low_pages_confirm"
+        )
 
-    # 条件 3:当前页 < BOUNDARY_LOW · 上一页 ≥ BOUNDARY_LOW → "可能误判一页" · 翻下一页确认
-    if current < BOUNDARY_LOW and (prev is None or prev >= BOUNDARY_LOW):
+    # ---- Suspect boundary · 单页低 · 翻下一页确认 ----
+    if current < BOUNDARY_LOW:   # prev is None or prev >= BOUNDARY_LOW(已隐含)
         return Continue(direction="next_page", note="suspect_boundary_need_confirm")
 
-    # 条件 4:[BOUNDARY_LOW, ACCURATE_HIGH) 中间区 · 翻下一页(不判 boundary 也不停)
+    # ---- 中间区 · 翻下一页(不停)----
     if BOUNDARY_LOW <= current < ACCURATE_HIGH:
         return Continue(direction="next_page", note="middle_zone_unstable")
 
-    # 条件 5:前 5 页累积平均 < BOUNDARY_LOW · 触发 hopeless
-    if inputs.cumulative_pages_read < 5 and current < BOUNDARY_LOW:
-        return Hopeless(reason="early_pages_low_accuracy")
-
-    return Failure(reason="unreachable_policy_branch")
+    return Failure(reason="unreachable_policy_branch_should_never_hit")
 ```
 
 **关键差异 vs 原版**:
@@ -377,10 +398,11 @@ def decide_inquiry(parsed, inputs):
     if parsed.tag != "inquiry" and max(p[t] for t in ["ooo", "referral", "rejection", "neutral"]) >= NON_INQUIRY_AUTO_THRESHOLD:
         return AutoApply(tag=parsed.tag)
 
-    # 条件 4:argmax gap > 0.4 (top 与第二名差距大)→ auto-apply
+    # 条件 4(r2 #4 修紧):argmax gap > 0.4 仅在 top ≥ NON_INQUIRY_AUTO_THRESHOLD 时才 auto
+    # 之前的"gap > 0.4 即 auto"过松 · 绕开 0.85 阈值 · 现在要求双重门
     sorted_p = sorted(p.values(), reverse=True)
-    if sorted_p[0] - sorted_p[1] > 0.4:
-        return AutoApply(tag=parsed.tag)
+    if sorted_p[0] - sorted_p[1] > 0.4 and sorted_p[0] >= NON_INQUIRY_AUTO_THRESHOLD and parsed.tag != "inquiry":
+        return AutoApply(tag=parsed.tag, reason="high_gap_and_high_top")
 
     # 兜底:不静默 · 召人工
     return EscalateToHuman(

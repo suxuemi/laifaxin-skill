@@ -1,56 +1,132 @@
 ---
 name: laifaxin-outreach-v0.2
-description: Supervised browser spike (alpha) for Laifaxin (来发信) - Codex CLI orchestrated + computer-use plugin executed customer prospecting · Translates spec /Users/tony/Work/01_Data/03_laifaxin-docs/specs/active/2026-06-17-laifa-browser-agent-v0.2.md into a Codex-callable workflow · 主路径:输入产品 → AI 推演 → 翻页判精度 → 动态决定保存范围 → 保存 + 打标签 · 不用 AI 评分 · 用户必须在场监控 · session 用用户自登录账户
+description: Supervised browser spike (alpha) — ONLY for when user explicitly asks to OPERATE the Laifaxin (来发信) web UI (https://web.laifaxin.com) via Codex CLI + computer-use plugin · Scope strictly limited to 段 1 (input product → AI 推演 → choose audience) + 段 2 (page-by-page accuracy judgment → save contacts with dynamic range) · Does NOT use AI rating, does NOT operate templates/sequences/sending/inbox, does NOT handle replies · For cold-email copywriting, sequence design, reply handling, or generic prospecting advice → DEFER to laifaxin-outreach v0.1 · User must be present (alpha · supervised) · Existing logged-in account, no canary
 ---
 
 # Laifaxin Outreach v0.2 · Supervised Browser Spike (alpha)
 
-> ⚠️ **alpha 阶段 · 高风险 · 必须用户在场监控 · 用户真账户 · 不保证 SLA**
-> 设计依据:`specs/active/2026-06-17-laifa-browser-agent-v0.2.md`(本仓本地 · 同步前)
+> ⚠️ **alpha · 高风险 · 用户必须在场 · 用户真账户 · 不保证 SLA · 不是无人值守 agent**
+> 设计依据:`specs/done/2026-06-17-laifa-browser-agent-v0.2.md`(本仓)
 > 安全模型:`safety-gates.md`(本目录)
 > 决策框架:`decision-prompts.md`(本目录)
 > 执行 runners:`runners/`(本目录 · W3 实施)
 
-## 触发场景
+## § 0 · Trigger Precedence(触发优先级 · 防抢 v0.1)
 
-只在以下场景启用本 skill:
-- 用户说"用来发信跑 X 产品的客户开发"
-- 用户说"启动浏览器 agent 帮我开发外贸客户"
-- 用户明确开启 `--mode=browser-spike` 标志
+| 用户问的 | 应触发哪个 skill |
+|---|---|
+| "用来发信开发外贸客户 / 找美国客户 / 帮我搜客户" | **v0.1**(SOP / 出关键词) · v0.2 不抢 |
+| "帮我写一封开发信" / "写第一轮邮件" / "搞一个 sequence" | **v0.1** |
+| "客户回复了 X · 怎么办" / "客户回信怎么打标签" | **v0.1** + reply playbook |
+| **"在来发信网页里帮我实际操作搜客 / 翻页 / 保存"** | **v0.2** ✅ |
+| **"接管当前登录的 web.laifaxin.com 会话跑 browser spike"** | **v0.2** ✅ |
+| **"用 Codex 在浏览器里点 AI 推演 / 翻页判精度 / 保存联系人"** | **v0.2** ✅ |
+| 用户明确说"走 browser spike 模式"(natural language flag) | **v0.2** ✅ |
 
-## 7 项硬铁律(违反任意一条立即停)
+**严格 negative trigger**(v0.2 不应触发):
+- 任何邮件文案写作 / sequence 设计 / 回信处理诉求 → v0.1
+- 任何不涉及"在来发信网页内实际操作"的诉求 → v0.1
+- 任何涉及"AI 评分 / 智能跟进激活 / 邮件群发"的诉求 → 永久 block(scope out)
 
-| # | 规则 | 出处 |
+## § 1 · Scope(严格 · 不得越界)
+
+```yaml
+in_scope:
+  - 段 1 客群推演(AI 数据库输入产品 → AI 推演 → 选客群)
+  - 段 2 翻页判精度(逐页 LLM 看 → 找精度边界 → 动态保存范围)
+  - 联系人保存(单家 5-10 邮箱)
+  - 打标签(公式:语言-国家-产品/行业-供应链角色)
+
+out_of_scope:                       # 任何操作 = 立即 stop + alert
+  - 智能跟进计划(创建 / 编辑 / 添加 / 激活 / 任何操作)
+  - 邮件模板(创建 / 编辑 / 测试发送 / 插入变量 / 任何操作)
+  - AI 评分(任何按钮 · 全链路)
+  - 邮件群发 / 发送 / 收发
+  - 删除 / 导出 / 黑名单
+  - 设置 / 权限 / 充值
+```
+
+**scope 越界检测**:状态机检测 page url 进入 out_of_scope 模块(`/marketing/sequences/*` / `/contacts/templates/*` 等)→ **立即 pause + alert**(铁律 5)。
+
+## § 2 · 5 项入口硬铁律(违反任意 = 立即 stop)
+
+| # | 铁律 | 详细位置 |
 |---|---|---|
-| 1 | **用户必须在场监控**(整个 run 期间 Chrome 必须前台 + 用户能介入) | spec § 2.1 |
-| 2 | **不主动点击 AI 评分按钮**(Tony § 0 #8)· 主路径用翻页 | spec § 5 |
-| 3 | **不点击永久 block 列表里的按钮**(发送 / 激活 / 删除 / 导出 / 黑名单 / 退订 / 拒收 / 举报 / 启用 / 启动 等)· 详见 `safety-gates.md` | spec § 4.1 |
-| 4 | **危险动作(保存 / 提交)必须 one-time approval token**(用户当场签发 · 用后作废)· 详见 `safety-gates.md` § token | spec § 4.2 |
-| 5 | **变量占位符 `{联系人:名称}` 必须用来发信【插入变量】按钮替换** · 严禁字面字符串发出 | v0.1 references/09 |
-| 6 | **写回 audit 数据**:每个 run 必填 `~/.codex/runs/<run_id>/run.json + summary.md + artifacts.json` · screenshots / llm_logs 不入 repo | spec § 6 |
-| 7 | **完成性铁律**:用户指定保存 N 公司时 · 必须逐家完成 · 严禁"...同上..."省略 | v0.1 references/04 § 6 |
+| 1 | **用户在场监控** · 用户必须能随时介入 / 终止 run(不要求 Chrome 前台 · 但要求用户 watching) | spec § 2.1 |
+| 2 | **scope 越界 = 立即 stop + alert** · 进入 § 1 out_of_scope 模块的 URL / 页面 → fail-closed | safety-gates.md § 0 + 状态机 |
+| 3 | **危险按钮(发送 / 激活 / 删除 / 导出 / 黑名单 / AI 评分 / 插入变量 / 创建模板 等)永久 block** · 不接受 token 也不点 | safety-gates.md § 2.3 + § 3 |
+| 4 | **Guarded 动作(保存联系人 / 确认转化)必须 one-time token** · 5 分钟过期 · abandoned 5 分钟无响应 = pause + 等人工 resume · revoked 用户取消 | safety-gates.md § 4 |
+| 5 | **登录失效 / 验证码 / 反爬迹象 / 权限弹窗 = pause + alert** · 不得自动 retry / 自动恢复 / 自动绕过 | safety-gates.md § 7 失败矩阵 |
 
-## 主流程(7 步 deterministic + 3 LLM 节点)
+> **r1 deep-review 反馈**:
+> - 删旧"完整性铁律"(过宽 + 跟 spec § 4 完整性约束重复)
+> - 删旧"变量占位符"(scope out · 模板编辑被永久 block)
+> - 删旧"Chrome 必须前台"(spec 关键能力之一是不要求前台)
+> - 加 scope 越界 + 登录失效 = 必修(alpha 受监控 agent 基础)
+
+## § 3 · Audit 最小闭环(铁律 4 详细)
+
+每 run 必须生成:
 
 ```
-1. 启动 + session 检查(Chrome 已登录 web.laifaxin.com)
-2. 输入产品 → 点 AI 推演 → 读 4 客群卡片
-3. LLM 节点 1:选客群(读历史 dead 档案避坑)→ Confirm 闸 1
-4. 进入搜索结果 → 翻页 sequential
-5. LLM 节点 2(每页):当前页 ≥ 70% 对口?→ 累积或定边界
-6. 找到边界 K 页 → 保存范围 = (K-1) × 10 公司 × 5-10 邮箱/家 → Confirm 闸 2 + Token
-7. 执行保存 → 写回 run.json + summary.md
+~/.codex/runs/<run_id>/                             # 本地大附件(不入 repo)
+  ├── tokens.sqlite                                  # safety controller 状态
+  ├── screenshots/                                    # 每步截图
+  └── llm_logs.jsonl                                  # 每节点 LLM 输入/输出/validation/retry/failure_diagnostics
+
+raw/prospecting/<product>/runs/<run_id>/            # 入 repo(跨设备审计)
+  ├── run.json                                        # 结构化 run 元数据(spec § 6.2 schema)
+  ├── summary.md                                      # 人读摘要(从 run.json 派生)
+  └── artifacts.json                                  # 指针 + screenshots/llm_logs hash list
 ```
 
-跨 run 场景:
+**每个 LLM 节点失败也要写 `failure_diagnostics`**:error_type / invalid_fragment / repair_attempts / taken_over_by_human / final_action(对齐 decision-prompts.md § 4)。
+
+## § 4 · 主流程(对齐 decision-prompts.md 最新 canonical · 不复述策略)
+
 ```
-LLM 节点 3:客户回信 → 询盘 / OOO / 转介 / 拒绝 / 待定 → 打标签 → sequence 自动过滤
+1. 启动 + session 检查(Chrome 已登录 web.laifaxin.com 任一搜客页 + 非登录页面 + cookie 有效)
+2. 输入产品 → 点 AI 推演(或 AI 智能生成) → 等 4 客群卡片
+3. LLM 节点 1(decision-prompts.md § 1):选客群 · Confirm 闸 1 用户拍板
+4. 点"立即查看"进入搜索结果
+5. 翻页 sequential · 每翻一页调用 LLM 节点 2(decision-prompts.md § 2):
+   - 当前页 ≥ 0.80 对口 → 翻下一页
+   - 0.60 ~ 0.80 中间区 → 翻下一页(不停)
+   - 当前 < 0.60 且 上一页 ≥ 0.60 → 翻下一页确认(单页不判 boundary)
+   - **双页连续 < 0.60 → boundary 确认**(此即"精度边界")
+6. 保存范围 = (boundary_page - 1) × 10 公司 × 5-10 邮箱/家(按 decision-prompts § 2 计算)
+7. Confirm 闸 2:用户签发 one-time token(预算预演:估算总邮箱数 × 单价)
+8. 执行保存 → 写回 run.json + summary.md + artifacts.json
+9. 完成 · 用户 review
 ```
 
-## 关联
+**⚠️ 主流程**:
+- **不包含**段 3 写邮件 / 段 4 sequence 配置 / 段 5 回信处理(scope out)
+- **不调用**AI 评分按钮(Tony § 0 #8)
+- LLM 节点 3 询盘识别**不在 v0.2 alpha 主流程**(scope out · 暂留 spec § 5.1 设计 · 实际触发在 v0.3+)
 
-- spec(待发):`specs/active/2026-06-17-laifa-browser-agent-v0.2.md`(本仓)
+## § 5 · Executor 路(对齐 safety-gates.md § 1 + spec § 1.4)
+
+- **主路**:`computer-use@openai-bundled` plugin(看屏幕 + macOS accessibility tree)· Tony § 0 #4 不加 DOM data-test-id · 看像素更稳
+- **辅助路**:`browser-use@openai-bundled` plugin · 用 `url()` / `title()` 给 computer-use 提供页面上下文判断
+- **不用**:`browser@openai-bundled`(更基础 · 当前不依赖)
+
+## § 6 · 触发后必须先读的文件(顺序)
+
+LLM agent 触发本 SKILL 后,**按顺序读**:
+
+1. `safety-gates.md`(本目录)— scope + 白名单 + token + 失败矩阵
+2. `decision-prompts.md`(本目录)— 3 LLM 节点 prompt + schema + decision policy
+3. `runners/README.md`(本目录)— runner 接口(W3 实施 · 当前 stub)
+4. `HOW-TO-START-SPIKE.md`(本目录)— 启动预飞 + 紧急停 + 反馈
+
+## § 7 · 关联
+
+- spec(已归档):`specs/done/2026-06-17-laifa-browser-agent-v0.2.md`
+- 关键决策回顾:`wiki/history/2026-06-laifa-browser-agent-v0.2-design.md`
 - safety-gates(本目录)
 - decision-prompts(本目录)
-- runners(本目录 · W3 实施)
+- runners(本目录 · stub)
+- HOW-TO-START(本目录)
 - v0.1 包(已发):[github.com/suxuemi/laifaxin-skill](https://github.com/suxuemi/laifaxin-skill)
+- spike 分支:[github.com/suxuemi/laifaxin-skill/tree/spike/v0.2-alpha](https://github.com/suxuemi/laifaxin-skill/tree/spike/v0.2-alpha)

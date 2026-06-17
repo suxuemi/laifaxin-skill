@@ -50,8 +50,10 @@ class V02SpikeRunner:
         self.product = product_input
         self.run_id = generate_run_id()    # ts + uuid
         self.audit = AuditWriter(self.run_id)
-        self.safety = SafetyEnforcer.from_yaml("safety-gates.md")
-        self.decision = DecisionCaller.from_yaml("decision-prompts.md")
+        # safety-gates.md / decision-prompts.md 是文档+数据源(markdown 内嵌 yaml 块)
+        # 加载方式:提取 fenced ```yaml 块 → 拼接 → schema validate
+        self.safety = SafetyEnforcer.from_md_yaml_blocks("safety-gates.md")
+        self.decision = DecisionCaller.from_md_yaml_blocks("decision-prompts.md")
         self.browser = ComputerUsePlugin()  # ~/.codex/computer-use/
 
     async def run(self):
@@ -80,7 +82,9 @@ class V02SpikeRunner:
         # 4. 进入搜索结果
         await self.safety.safe_click(semantic="立即查看", index=chosen)
 
-        # 5. 翻页 sequential + LLM 节点 2(每页)
+        # 5. 翻页 sequential + LLM 节点 2(每页)· 对齐 decision-prompts.md § 2.4 新 contract
+        page_history = []
+        prev_acc = None
         boundary_page = None
         for page in range(1, 1000):   # 安全上限
             rows = await self.read_current_page()
@@ -92,19 +96,27 @@ class V02SpikeRunner:
                     "product_positioning": self.product,
                     "audience_context": chosen,
                     "cumulative_pages_read": page,
-                }
+                    "prev_page_accuracy": prev_acc,    # r2 #5 必修 · 双页确认需要
+                },
+                page_history=page_history,             # 全 history 给 hopeless 累积平均判断
             )
+            page_history.append({"page": page, "accuracy": decision_2.payload.get("accuracy")})
+            prev_acc = decision_2.payload.get("accuracy")
 
-            if decision_2.verdict == "boundary_reached":
-                boundary_page = page
+            # decision_2.final_disposition.type ∈ {Continue, BoundaryReached, Hopeless, Failure}
+            disp_type = decision_2.final_disposition.type
+            if disp_type == "BoundaryReached":
+                boundary_page = decision_2.final_disposition.payload["at_page"]    # 已是"最后准页"
                 break
-            elif decision_2.verdict == "hopeless":
+            elif disp_type == "Hopeless":
                 return await self.handle_repick()
-            else:   # accurate_continue
+            elif disp_type == "Failure":
+                return await self.handle_fail_closed(decision_2)
+            else:   # Continue
                 await self.safety.safe_click(semantic="下一页")
 
-        # 6. 保存范围 = (K-1) × 10
-        save_count = (boundary_page - 1) * 10
+        # 6. 保存范围 = boundary_page × 10(boundary_page 已是最后准页 · 不再 -1)
+        save_count = boundary_page * 10
         token = await self.request_user_token(
             action="保存",
             params={"count": save_count, "emails_per_company": "5-10"}
@@ -152,17 +164,35 @@ def test_allowed_action_passes():
 
 ```python
 def test_llm_node_1_returns_one_audience():
-    caller = DecisionCaller.from_yaml("decision-prompts.md")
+    # contract 对齐 decision-prompts.md § 1.3 新 schema
+    caller = DecisionCaller.from_md_yaml_blocks("decision-prompts.md")
     result = caller.call("choose_audience", inputs={...})
     assert result.chosen in [1, 2, 3, 4, None]
-    assert result.confidence >= 0.0 and result.confidence <= 1.0
-    assert result.reasoning is not None
+    assert len(result.evidence_snippets) >= 1
+    assert len(result.applied_rules) >= 1
+    assert result.why_not_top_alt.audience_index in [0, 1, 2, 3, 4]
+    # ⚠️ 不再 assert confidence / reasoning · r1/r2 已降级为 audit 字段(不参与决策门)
 
 def test_llm_node_2_boundary_detection():
-    caller = DecisionCaller.from_yaml("decision-prompts.md")
+    # contract 对齐 § 2.4 新 disposition · 不是 verdict enum 字符串
+    caller = DecisionCaller.from_md_yaml_blocks("decision-prompts.md")
     rows_high_match = [{"description": "We import LED outdoor lighting from China"} for _ in range(10)]
-    result = caller.call("per_page_accuracy", inputs={"rows": rows_high_match, ...})
-    assert result.verdict in ["accurate_continue", "boundary_reached", "hopeless"]
+    result = caller.call("per_page_accuracy", inputs={"rows": rows_high_match, "prev_page_accuracy": 0.85, ...})
+    assert result.final_disposition.type in ["Continue", "BoundaryReached", "Hopeless", "Failure"]
+    assert 0.0 <= result.payload["accuracy"] <= 1.0
+
+def test_llm_node_2_two_page_boundary_calculation():
+    # r2 #2 必修 · 双页连续 < 0.6 · boundary_page = page - 2(最后准页)
+    caller = DecisionCaller.from_md_yaml_blocks("decision-prompts.md")
+    # 模拟第 62 页 · 当前 0.5 / 上一页(第 61) 0.5
+    result = caller.call(
+        "per_page_accuracy",
+        inputs={"page_number": 62, "rows": [...], "prev_page_accuracy": 0.5, ...},
+        page_history=[{"page": p, "accuracy": 0.85} for p in range(1, 61)] + [{"page": 61, "accuracy": 0.5}],
+    )
+    assert result.final_disposition.type == "BoundaryReached"
+    assert result.final_disposition.payload["at_page"] == 60   # page - 2 · 最后准页是第 60 页
+    assert result.final_disposition.payload["save_companies"] == 600
 ```
 
 ## W3 启动前需补全
