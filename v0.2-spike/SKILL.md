@@ -45,6 +45,11 @@ description: Supervised browser spike (alpha) — ONLY for when user explicitly 
 7. 写入 run.json.user_overrides · 整个 run 用 effective config
 ```
 
+**effective_config 单一所有权(α.3.3 钉死 · r9 闭环)**:
+- **runner 是唯一所有者**:`Runner.__init__()` 读 parameters-defaults → 合并 user_overrides → 生成 `self.effective_config` → 写 `run.json.effective_config`
+- DecisionCaller / safety-gates / promote 脚本等 **所有消费者都只读 `run.json.effective_config`**,不再自己加载 defaults
+- `DecisionCaller.__init__()` 接收 `effective_config: dict` 参数(runner 注入)· 不再读 markdown
+
 **强约束**(参 `parameters-defaults.md` § 5):
 - `permanently_blocked_actions` / `scope_out_modules` = **frozen** · 用户不可改
 - `token_expire_minutes` / `max_run_duration_minutes` 有 hard_ceiling · 用户可放宽但有上限
@@ -122,8 +127,8 @@ sampling:
   method: sequential_paging
   pages_read: int
   per_page_accuracy: [{page, accuracy}]   # array
-  boundary_page: int                      # 最后准页(双页 < 0.6 之前)
-  save_companies: int                     # = boundary_page × 10
+  boundary_page: int                      # 最后准页(双页 < boundary_low 之前)
+  save_companies: int                     # = eval(effective_config.save_companies_formula, {boundary_page})  · capped by max_save_companies
 saving:
   task_id, saved_companies, saved_emails, tags_applied
 audit:
@@ -147,13 +152,14 @@ failure_diagnostics:                      # null if successful
 2. 输入产品 → 点 AI 推演(或 AI 智能生成) → 等 4 客群卡片
 3. LLM 节点 1(decision-prompts.md § 1):选客群 · Confirm 闸 1 用户拍板
 4. 点"立即查看"进入搜索结果
-5. 翻页 sequential · 每翻一页调用 LLM 节点 2(decision-prompts.md § 2):
-   - 当前页 ≥ 0.80 对口 → 翻下一页
-   - 0.60 ~ 0.80 中间区 → 翻下一页(不停)
-   - 当前 < 0.60 且 上一页 ≥ 0.60 → 翻下一页确认(单页不判 boundary)
-   - **双页连续 < 0.60 → boundary 确认**(此即"精度边界")
-6. 保存范围 = **boundary_page × 10** 公司 × 5-10 邮箱/家(对齐 decision-prompts.md § 2.4 canonical · `boundary_page` 已是"最后准页" · 不再 -1)
-7. Confirm 闸 2:用户签发 one-time token(预算预演:估算总邮箱数 × 单价)
+5. 翻页 sequential · 每翻一页调用 LLM 节点 2(decision-prompts.md § 2)· **阈值全部来自 `effective_config`**(下面只是 default · 用户可在 § 0.5 启动对话覆盖):
+   - 当前页 ≥ `boundary_high`(default 0.80) → 翻下一页
+   - `boundary_low` ~ `boundary_high` 中间区 → 翻下一页(不停)
+   - 当前 < `boundary_low`(default 0.60) 且 上一页 ≥ `boundary_low` → 翻下一页确认(单页不判 boundary)
+   - **双页连续 < `boundary_low` → boundary 确认**(此即"精度边界")
+   - 总页数上限 = `effective_config.max_boundary_pages`(default 50 · 防失控)
+6. 保存范围 = `eval(effective_config.save_companies_formula, {boundary_page})` · default 公式 `boundary_page * 10` · cap = `effective_config.max_save_companies`(default 1000)· 邮箱/家 = `effective_config.emails_per_company`(default "5-10")
+7. Confirm 闸 2:用户签发 one-time token(预算预演:估算总邮箱数 × 单价)· **审批模型唯一**:runner 在此处预签 token,把 `pre_signed_token` 直接透传给 safety-gates `safe_click(..., pre_signed_token=...)`,gates 层 `consume()` 不再触发第二次 `await_user_token()`(详见 safety-gates.md § 4.5)
 8. 执行保存 → 写回 run.json + summary.md + artifacts.json
 9. 完成 · 用户 review
 ```
