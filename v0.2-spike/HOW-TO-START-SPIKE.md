@@ -2,151 +2,292 @@
 name: laifaxin-outreach-v0.2 · HOW-TO-START-SPIKE
 type: meta
 status: active
-version: 0.2.0-alpha.0
+version: 0.2.0-alpha.2
 created: 2026-06-17
 updated: 2026-06-17
-tags: [v0.2, alpha, spike, codex, how-to-start, runbook]
-description: v0.2 alpha 浏览器 agent 实战启动 runbook · Tony / 用户在自己 mac 上跑首次 spike 的完整步骤 · 包含预跑前检查清单 / Codex CLI 实际启动命令 / 第一次 run 推荐参数 / 失败应对
+tags: [v0.2, alpha, spike, codex, runbook, pre-flight, stop-sop]
+description: v0.2 alpha 浏览器 agent 实战启动 runbook · r1 deep-review 全面重写 · 5 分钟预飞改为权威 runtime check · 启动命令改自然语言 prompt(删伪 DSL)· 紧急停降级表述去除过承诺 · 回灌 sink 对齐 spec § 6 run.json(不再撞 wiki/history)
 ---
 
-# HOW-TO-START-SPIKE · v0.2 alpha 首次实战 runbook
+# HOW-TO-START-SPIKE · v0.2 alpha 首次实战 runbook(r1 重写版)
 
-> ⚠️ **第一次跑前必读 · 跑完后回灌 W3 实测数据**
+> **r1 deep-review 反馈**:原版 🔴 大改 · 18 条硬伤
+> - 启动入口 `/laifaxin-outreach-v0.2 product=...` 凭空 DSL · 不存在
+> - 5 分钟预飞全是心理安慰 · 没真验 runtime
+> - 紧急停"computer-use 自动暂停 / agent 立即报失效"= 过承诺
+> - 回灌 sink 写到 `~/.codex/runs/.../summary.md`(应在 `raw/prospecting/...`)+ append `wiki/history`(撞治理)
+>
+> **重写策略**:权威 runtime check + 真启动命令 + 紧急停降级表述 + 回灌对齐 spec § 6
 
-## 0. 预跑前 5 分钟检查清单
+## § 0 · 前置条件(执行前必须满足)
+
+| 项 | 检查 / 设置 |
+|---|---|
+| Codex CLI 已安装且能执行 | 绝对路径 `/Applications/Codex.app/Contents/Resources/codex`(无需 PATH 别名) |
+| Codex CLI 版本 | `0.140.0-alpha.2`(精确锁定 · 不接受其他版本) |
+| 3 plugin 启用 | `browser@openai-bundled` / `browser-use@openai-bundled` / `computer-use@openai-bundled` 全 enabled |
+| Chrome 已登录来发信 | 打开 `https://web.laifaxin.com/search/refine-search` · 可见搜索页 · 非登录页 |
+| 用户在场监控 | 全程能随时介入 / 终止 run · 不要求 Chrome 前台,但要求用户 watching |
+| `~/.codex/runs/` 目录可写 | `mkdir -p ~/.codex/runs && touch ~/.codex/runs/.write-test && rm $_` |
+| 来发信账户点数余额 | 心里清楚 · 单次 stop-loss 阈值(例:300 点 ≈ ¥30)· 超过立即停 |
+
+## § 1 · 5 分钟预飞 runtime check(pass/fail 都有标准)
 
 ```bash
-# 1. Codex CLI 版本对齐
-codex --version
-# 期望: codex-cli 0.140.0-alpha.2(或更高,但 W3 用 0.140.0-alpha.2 锁定测)
+# ========== Check 1: Codex 版本(权威 · 走绝对路径)==========
+CODEX=/Applications/Codex.app/Contents/Resources/codex
+[ -x "$CODEX" ] || { echo "❌ Codex 不存在: $CODEX"; exit 1; }
+VER=$($CODEX --version 2>&1)
+echo "Codex version: $VER"
+[[ "$VER" == *"0.140.0-alpha.2"* ]] || { echo "❌ 版本不匹配"; exit 1; }
+echo "✓ Check 1 pass"
 
-# 2. 3 plugin 状态
-grep -A1 "computer-use@openai-bundled\|browser-use@openai-bundled\|browser@openai-bundled" ~/.codex/config.toml
-# 期望: 全 enabled = true
+# ========== Check 2: 3 plugin 启用(走 Codex 子命令而非 grep config)==========
+# 注:'codex plugin list' 是当前可用子命令(本 mac 实测有 `codex plugin` 子命令)
+$CODEX plugin list 2>&1 | grep -E "browser|browser-use|computer-use" || \
+  $CODEX doctor 2>&1 | grep -i "plugin" || \
+  { echo "❌ plugin 状态未坐实"; exit 1; }
+echo "✓ Check 2 pass(实证 plugin 状态 · 不是只读 config)"
 
-# 3. Chrome 已登录 web.laifaxin.com + tab 前台
-# (手动检查)
+# ========== Check 3: Chrome web.laifaxin.com 登录态 ==========
+# 手动:浏览器打开 https://web.laifaxin.com/search/refine-search
+#   - 可见搜索输入框 → ✓
+#   - 跳到登录页 → ❌(重新登录后再跑)
+echo "✓ Check 3:用户手动确认搜索页可见 · 非登录页"
 
-# 4. ~/.codex/runs/ 目录可写
+# ========== Check 4: runs/ 可写 ==========
 mkdir -p ~/.codex/runs && touch ~/.codex/runs/.write-test && rm ~/.codex/runs/.write-test
-echo "✓ runs/ writable"
+echo "✓ Check 4 pass"
 
-# 5. SkyComputerUseClient.app 通知通道
-ls "/Users/tony/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
-# 期望: 文件存在
+# ========== Check 5: SkyComputerUseClient(从 config 读 · 不硬编码路径)==========
+NOTIFY=$(grep "^notify" ~/.codex/config.toml | head -1)
+echo "notify config: $NOTIFY"
+# 不强制路径 · 配置存在即可
+echo "✓ Check 5:config 中 notify 已配"
 
-# 6. 跑前 wallpaper 截图(可选 · 用于回看比对)
-screencapture ~/.codex/runs/pre-spike-$(date +%s).png
+# ========== Check 6: 点数余额 ==========
+# 手动:登录来发信 · 查看顶部点数余额 · 心里有数
+# 建议:当前余额 ≥ 500 点(可应付 alpha 多次 spike · 不被余额报警打断)
+echo "✓ Check 6:用户确认余额充足 · 知道 stop-loss 阈值"
 
-# 7. 月度营销预算心里有数(虽然 Tony §0#8 不用 AI 评分但翻页+保存仍可能误触发)
+echo "🎉 5 分钟预飞通过 · 可以进 § 2 启动"
 ```
 
-## 1. 第一次 spike · 推荐参数
+## § 2 · 启动命令(真实 · 可复制 · 可验证)
+
+### 2.1 W2 当前阶段:用 Codex 交互模式做 smoke test
+
+```bash
+CODEX=/Applications/Codex.app/Contents/Resources/codex
+$CODEX
+# 在交互中,逐条复制以下 prompt 跑 smoke test:
+```
+
+**Smoke test 1**:能不能截图 web.laifaxin.com 搜索页?
+
+```
+你是 laifaxin-outreach-v0.2 spike 的 smoke tester.
+
+Task: 使用 computer-use plugin 截图当前 Chrome 活跃 tab.
+要求报告:
+- 用了哪个 plugin (browser-use / computer-use)
+- 截图 path
+- 截图分辨率
+- 截图中文本"AI 数据库" / "AI 推演" 是否可见
+
+不要点击 · 不要操作 · 只截图 · 报告完停.
+```
+
+**预期通过**:报告 `computer-use plugin · ~/.codex/screenshots/xxx.png · 1920x1080 · 文本可见 ✓`
+
+**Smoke test 2**:能不能从截图读出 "AI 推演" 按钮位置?
+
+```
+你是 laifaxin-outreach-v0.2 spike 的 smoke tester.
+
+Task: 使用 computer-use plugin + macOS accessibility tree · 读取当前 Chrome 中
+"AI 推演" 按钮的可见文本 + 坐标位置 + accessibility role.
+
+要求报告:
+- 用了哪个 API (computer-use a11y / OCR / vision)
+- 找到的按钮坐标 (x, y)
+- 按钮文本归一化结果
+
+不要点击 · 只读取 · 报告完停.
+```
+
+**预期通过**:报告 a11y tree 找到按钮 + 坐标 + 文本"AI 推演"
+
+**Smoke test 3**:能不能验证 token gate(controller 拦截 dangerous 按钮)?
+
+```
+你是 laifaxin-outreach-v0.2 spike 的 smoke tester.
+
+Task: 模拟点击来发信"AI 评分"按钮(永久 block 列表).
+不要真的点 · 只读 safety-gates.md L135-140 · 报告:
+- 该按钮的 disposition (permanently_blocked / guarded / allowed)
+- 如果尝试点会发生什么 (报错消息 · 截图 · alert)
+- agent 应该怎么做(立即停 / 截图 / 报告用户)
+
+报告完停.
+```
+
+**预期通过**:报告"permanently_blocked · agent 立即停 + 截图 + alert"
+
+**3 smoke 全 pass 才能进 § 2.2 W3 实施**
+
+### 2.2 W3 实施后:真 prospect.py 启动
+
+W3 写完 `runners/prospect.py`(参 `runners/README.md` 伪 API)后,启动方式:
+
+```bash
+# 选项 A:python 直跑(前台 · 用户在场监控 · 推荐 alpha)
+python skills-public/laifaxin-outreach-v0.2/runners/prospect.py \
+  --product "皮筏艇" \
+  --max-boundary-pages 50 \
+  --emails-per-company 5 \
+  --tag "en-US-inflatable-boat-retailer"
+
+# 选项 B:Codex 自然语言触发(后续 alpha 探索 · 当前不推荐)
+$CODEX << 'EOF'
+启动 laifaxin-outreach-v0.2 spike · 跑产品"皮筏艇" ·
+最大翻页 50 · 单家 5 邮箱 · 标签 en-US-inflatable-boat-retailer ·
+保存到 raw/prospecting/inflatable-boat/runs/
+EOF
+```
+
+⚠️ 不要用 `/laifaxin-outreach-v0.2 product=...` 这种伪 DSL · Codex 不支持。
+
+## § 3 · 推荐参数(第一次跑)
 
 | 参数 | 推荐值 | 理由 |
 |---|---|---|
-| 产品 | 你最熟的一个(如"皮筏艇" / "LED 户外照明") | 已知客群对路 · 易判 agent 是否选对 |
-| 目标 boundary 上限 | 50 页(500 公司)| 起步小 · 别一次跑 600 公司 |
-| 单家邮箱数 | 5 | 起步取保守值 · 后续可调 10 |
-| 标签 | `<lang>-<country>-<product>-<role>` | 测一次完整公式 · 见 [docs/zhinan/03-save-customers](https://www.laifa.xin/zhinan/03-save-customers) |
-| 是否激活计划 | **❌ 否** | spike 只测搜+筛+保存 · 计划激活手动后做 |
+| 产品 | 你最熟的一个(如"皮筏艇")| 已知客群对路 · 易判 agent 是否选对 |
+| 目标 boundary 上限 | 50 页(500 公司)| 起步小 · 别一次跑 600 |
+| 单家邮箱数 | 5 | 起步保守 · 后续可调 10 |
+| 标签 | 完整公式 `<lang>-<country>-<product>-<role>` | 见 [docs/zhinan/03-save-customers](https://www.laifa.xin/zhinan/03-save-customers) |
+| 是否激活计划 | **❌ 否** | scope out · 永久 block · spike 只测搜+保存 |
 
-## 2. 启动命令(W3 实施后填实际 prompt)
+## § 4 · 紧急停 SOP(降级表述 · 删除过承诺)
 
-```bash
-# 当前 (W2):runners/prospect.py 还是 stub · 先用 codex 交互模式手摸
-# W3 实施后:
-# codex exec - <<'EOF'
-# /laifaxin-outreach-v0.2 product="皮筏艇" max_boundary_pages=50 emails_per_company=5
-# EOF
-```
+> r1 反馈:"computer-use 自动暂停 / agent 立即报失效"都是过承诺 · 当前工具面没保证。
 
-**当前 W2 状态**:用 Codex 交互模式手摸 plugin 接口,先验证基础能力 · 不跑完整 orchestration。手摸 3 件事:
+### 4.1 主路径:前台 Ctrl-C(推荐 alpha)
 
-```bash
-codex
-# 在交互中:
-# 1. 让 Codex 截图 web.laifaxin.com/search/refine-search
-# 2. 让 Codex 描述屏幕上的 AI 推演按钮位置
-# 3. 让 Codex 模拟点 AI 推演(但用户在场,准备 Ctrl-C 紧急停)
-```
+| 运行模式 | Kill 方式 |
+|---|---|
+| 前台 `python prospect.py ...` | **同终端 Ctrl-C**(SIGINT)→ runner 应触发 finally block 写 audit + close codex 连接 |
+| 前台 `codex` 交互 | 同终端 Ctrl-C |
+| 后台(W3 之后):`codex exec` + run_id | `ps aux \| grep codex` 找 PID → `kill -SIGTERM <PID>` → controller 应触发 graceful shutdown |
 
-如果这 3 步都 work · 才进 W3 写 `prospect.py`。
+### 4.2 兜底:关闭 Chrome tab
 
-## 3. 关键观察指标(W3 启动后填回灌)
+**降级表述**:关掉 Chrome tab → 后续 computer-use 操作会失败(无法定位按钮)→ runner 应在错误处理中停 + 写 audit · **不承诺 immediate session invalid**
 
-每次 spike 跑完 · 用户记 1 行:
+### 4.3 验证码 / 登录失效 / 反爬
+
+当 agent 遇到这些场景:
 
 ```yaml
-run_id: <Codex 自动生成>
-date: 2026-06-XX
-product: <产品名>
-boundary_page: <翻到第几页停>
-saved_companies: <实际保存>
-saved_emails: <实际保存>
-wall_clock_minutes: <开始到结束>
-user_interventions: <你介入了几次>
-errors: <遇到几次错>
-ocr_misreads: <OCR 识别错按钮几次>
-anti_bot_trigger: <反爬响应几次>
-points_spent: <扣了多少点数>
+状态机:
+  detected: ["验证码页面", "登录跳转", "5xx 错误", "anti-bot challenge"]
+  action: paused_for_human
+  user_action: 手动过码 / 重新登录 / 等冷却
+  resume: 用户跑 `codex exec --resume <run_id>`(或 W3 自定义 `prospect.py --resume <run_id>`)
+  no_auto_retry: true   # agent 不得自动 retry · 必须人工 resume
 ```
 
-填回 `~/.codex/runs/<run_id>/summary.md` · W5 soak 汇总分析。
+### 4.4 余额 / 点数报警
 
-## 4. 紧急停操作
+**当前 docs 没坐实"即将耗光监控弹窗"**(原文承诺过头 · 已删)。
 
-| 状况 | 怎么停 |
-|---|---|
-| agent 准备点了不该点的按钮(发送 / 激活 / 删除)| **关掉 Chrome tab** · agent 会立即报 session 失效 |
-| agent 卡住超 5 分钟没动 | Ctrl-C 进程 + 看 `~/.codex/runs/<run_id>/llm_logs.jsonl` 最后一行 |
-| 反爬验证码 | Codex `notify` 会弹 alert · 用户手动过验证码 + Codex 等 |
-| 点数即将耗光 | 来发信余额监控弹窗 → 立刻 Ctrl-C |
-| 计算机被别人借用 | Cmd-Tab 切走 + Chrome 失焦 → computer-use 自动暂停 |
+实际:
+- 来发信网页顶部点数余额是可见的(用户监控)
+- agent 在每次保存提交前(token 流)预演消费量 · 大于 stop-loss 阈值就拒绝出 token
+- 真扣到点数不足时 · 来发信会回弹"点数不足"提示 · agent 应停 + 报告
 
-## 5. 第一次 spike 之后(W4-W6 路径)
+### 4.5 Cmd-Tab / 窗口切换
 
-1. 写 `runners/prospect.py` 完整实现(参 `runners/README.md` stub 伪 API)
-2. 写 `safety_enforcer.py` 实际 enforce(从 `safety-gates.md` 加载 yaml)
-3. 写 `decision_caller.py` 调 LLM 节点(从 `decision-prompts.md` 加载 prompt)
-4. 写 `audit_writer.py` 落 `~/.codex/runs/<run_id>/run.json + summary.md + artifacts.json`
-5. 30/60 分钟 soak test
-6. 跑 5 次连续 success run · 计 alpha → beta 4 条硬条件(spec § 11.1 #5)
-7. promote 到 v0.2.0-beta.1
+**降级表述**:用户 Cmd-Tab 切走 → Chrome 失焦 → computer-use **行为未定义**(可能继续 / 可能失败)· **不承诺 auto-pause**
 
-## 6. 失败应对矩阵(对应 spec § 4.4 + safety-gates.md § 4)
+**正确做法**:不要用 Cmd-Tab 当 kill switch · 用 Ctrl-C 或关 tab。
 
-| 失败 | 应对 |
-|---|---|
-| Codex 找不到按钮 | 截图回灌 · 改 OCR / 同义词词典(`safety-gates.md` § 1) |
-| 用户 token 没及时签发 → 超时 | 跑 token 流(`safety-gates.md` § 3.1) |
-| 来发信 UI 大改 | 截图 + 报告 · spec 写"alpha 期可接受" |
-| 反爬封号 | 立刻停 · 24h 不跑 · 换关键词 / 等 cookie 重置 |
-| 模型输出非 yaml(LLM 节点回不严格) | 重跑 + confidence_threshold 提一档 |
+## § 5 · 关键观察指标(对齐 spec § 6.2 run.json)
 
-## 7. 反馈回灌
+每次 spike 自动 audit · run.json 字段(参 spec § 6.2):
 
-跑完每次 spike · 在 `wiki/history/2026-06-laifa-browser-agent-v0.2-design.md` 末尾追加一段:
+| 字段 | auto / manual | 说明 |
+|---|---|---|
+| `started_at / finished_at / duration_seconds` | auto | runner 自动写 |
+| `inference.chosen_audience` | auto | LLM 节点 1 输出 |
+| `sampling.pages_read / boundary_page / per_page_accuracy[]` | auto | LLM 节点 2 输出 |
+| `saving.saved_companies / saved_emails / tags_applied` | auto | runner 自动读保存结果 |
+| `audit.user_interventions` | auto | controller 记录每次 token 签发 |
+| `audit.warnings` | auto | LLM 低 confidence / OCR 兜底 / 反爬触发 |
+| `audit.anti_bot_trigger_count` | auto | reqstats / 5xx 计数 |
+| `failure_diagnostics`(if failed)| auto | error_type / invalid_fragment / repair_attempts / taken_over_by_human |
 
-```markdown
-## 实测日志 · YYYY-MM-DD-<run_id>
+**用户手填**(W3 后可选 · 用 `python prospect.py --add-manual-note <run_id>`):
+- 主观满意度评分(1-5)
+- 你认为 agent 做错了什么 / 该改什么
+- 是否要进 W4 实测下一轮
 
-- 总耗时:X 分钟
-- 用户介入:Y 次
-- 误操作:Z 次(预期 0)
-- 主要观察:...
-- 是否进 W4:Yes / No
+⚠️ 不再有"用户肉眼数 ocr_misreads"(原文凭空 · 删)。OCR 低 confidence 由 controller 自动 audit。
+
+## § 6 · 反馈回灌(对齐 spec § 6.1 · 不撞 wiki/history)
+
+### 6.1 每次 spike 自动落点(r1 #D4.3 #D4.5 必修)
+
+```
+raw/prospecting/<product>/runs/<run_id>/
+  ├── run.json                # 入 repo · 跨设备审计
+  ├── summary.md              # 入 repo · 人读摘要(从 run.json 派生 · 不另发明字段)
+  └── artifacts.json          # 入 repo · 指针 + hash list
+~/.codex/runs/<run_id>/
+  ├── tokens.sqlite           # 不入 repo
+  ├── screenshots/            # 不入 repo
+  └── llm_logs.jsonl          # 不入 repo
 ```
 
-5 次实测后:汇总 → 决定是否 alpha → beta promote。
+`summary.md` 字段**严格从 `run.json` 派生** · 不发明第二套字段。
 
-## 关联
+### 6.2 跨 spike 决策回灌(对齐 wiki/history 治理)
+
+**只在重大决策变化时**抽 wiki/history 一篇 · 不是每次 run 都写:
+
+| 触发 wiki/history 新篇 | 触发 raw/prospecting/runs/ |
+|---|---|
+| 阈值改了(如 0.6 → 0.55)| 每次 run |
+| 主路换了(computer-use → browser-use)| 每次 run |
+| Token 流改了 | 每次 run |
+| Tony 拍板新 scope | 每次 run |
+| **每次普通 run**(常态)| 仅 raw/prospecting/runs/ · 不撞 history |
+
+> 现行 `wiki/history/2026-06-laifa-browser-agent-v0.2-design.md` 是设计阶段总结 · 不是 run log。
+
+### 6.3 5 次连续 success run · alpha → beta promote(对齐 spec § 11.1 #5)
+
+每周汇总 `raw/prospecting/*/runs/*/run.json`(自动脚本可选):
+
+```bash
+# alpha → beta 4 条硬条件(spec § 11.1 #5)
+for run in raw/prospecting/*/runs/*/run.json; do
+  jq -r '[.result, .audit.user_interventions | length, .audit.anti_bot_trigger_count] | @tsv' "$run"
+done | tail -5 | awk '
+  $1=="success" && $2<=1 && $3<3 { pass++ }
+  END { exit(pass>=5 ? 0 : 1) }'
+echo "5 次连续达标:$?(0=可 promote / 1=未达标)"
+```
+
+## § 7 · 关联
 
 - 主 SKILL.md(本目录)
 - safety-gates.md(本目录)
 - decision-prompts.md(本目录)
-- runners/README.md stub(本目录)
-- 完整 spec:`specs/done/2026-06-17-laifa-browser-agent-v0.2.md`(本仓)
-- 关键决策回顾:`wiki/history/2026-06-laifa-browser-agent-v0.2-design.md`(本仓)
-- v0.1 包(已发):[github.com/suxuemi/laifaxin-skill](https://github.com/suxuemi/laifaxin-skill)
-- spike 分支:[github.com/suxuemi/laifaxin-skill/tree/spike/v0.2-alpha](https://github.com/suxuemi/laifaxin-skill/tree/spike/v0.2-alpha)
+- runners/README.md(本目录 · W3 实施 stub)
+- spec(已归档):`specs/done/2026-06-17-laifa-browser-agent-v0.2.md`
+- r1 deep-review:`raw/inbox/2026-06-17-codex-deep-审-HOW-TO-START.md`
+
+## § 8 · 一句话总结
+
+**权威 runtime check + smoke test 3 件套(截图 / 读 a11y / 验 token gate)+ 真启动命令(python prospect.py 主推)+ 紧急停 Ctrl-C 主路 + 回灌到 raw/prospecting/runs/(不撞 wiki/history)**
