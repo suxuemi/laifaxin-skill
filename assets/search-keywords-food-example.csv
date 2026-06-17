@@ -1,0 +1,13 @@
+round,seed_english,seed_chinese,channel,country,customer_role,industry_vertical,notes
+1,Nationwide Asian Food Wholesaler,全国性亚洲食品批发商,laifaxin-ai-database,US,wholesaler,asian-food,seed
+1,Asian Food Retailer,亚洲食品零售商,laifaxin-ai-database,US,retailer,asian-food,seed
+1,Asian Online Supermarket,亚洲在线超市,laifaxin-ai-database,US,online-retailer,asian-food,seed
+1,Food Manufacturer,食品制造商,laifaxin-ai-database,US,manufacturer,food,seed
+1,Nationwide Asian Food Importer Distributor,全国性亚洲食品进口分销商,laifaxin-ai-database,US,importer-distributor,asian-food,seed
+1,Local Asian Restaurant,本地亚洲餐厅,laifaxin-ai-database,US,end-user,asian-food,seed
+1,Online Platform for South Asian Cuisine,南亚美食的在线平台,laifaxin-ai-database,US,online-platform,south-asian-food,seed
+2,Regional Asian Grocery Distributor,区域性亚洲杂货分销商,laifaxin-ai-database,CA,distributor,asian-food,derived
+2,Halal Food Importer,清真食品进口商,laifaxin-ai-database,UK,importer,halal-food,derived
+3,Specialty Asian Frozen Foods Wholesaler,亚洲速冻食品专营批发商,laifaxin-ai-database,AU,wholesaler,frozen-asian-food,derived
+url,https://www.asianfoodwholesalers.com.au,,laifaxin-ai-database,AU,reference-customer,asian-food,known-customer-reverse-search
+url,https://www.nihonfood.nl,,laifaxin-ai-database,NL,reference-customer,japanese-food,known-customer-reverse-search
