@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# v0.2 alpha smoke test · 3 件套 · 对齐 HOW-TO-START-SPIKE.md § 2.1
+# 用法: bash smoke_test.sh
+# 注意: 这个脚本不是自动化测试 · 是给 Tony / 用户引导 Codex 跑 smoke 的 wrapper
+#       Tony 用 codex 交互模式手动跑下面 3 个 prompt · 这个脚本帮你 echo 出来 + 记 audit
+
+set -uo pipefail
+
+CODEX=/Applications/Codex.app/Contents/Resources/codex
+SMOKE_LOG="$HOME/.codex/runs/smoke-$(date +%Y%m%d-%H%M%S).log"
+mkdir -p "$(dirname "$SMOKE_LOG")"
+
+cat <<'EOF'
+==========================================
+Laifaxin Outreach v0.2 alpha · Smoke Test
+==========================================
+
+注意: 这个脚本是 Codex 交互引导 · 你需要在 Codex 交互模式下手动跑 3 个 prompt
+脚本会帮你 echo 出来 · 复制粘贴到 Codex
+
+EOF
+
+read -p "确认已读完 HOW-TO-START-SPIKE.md § 2.1 ? [y/N] " -r READY
+[[ "$READY" =~ ^[Yy]$ ]] || { echo "请先读完文档"; exit 1; }
+
+run_smoke() {
+    local idx="$1"
+    local name="$2"
+    local prompt="$3"
+
+    echo ""
+    echo "==========================================="
+    echo "Smoke Test $idx: $name"
+    echo "==========================================="
+    echo ""
+    echo "--- 复制以下 prompt 到 Codex 交互模式 ---"
+    echo "$prompt"
+    echo "--- prompt 结束 ---"
+    echo ""
+
+    read -p "Codex 报告了什么? 输 'pass' / 'fail' / 'skip': " -r RESULT
+    echo "[Smoke $idx] $name: $RESULT" >> "$SMOKE_LOG"
+
+    if [ "$RESULT" != "pass" ]; then
+        echo "❌ Smoke $idx 未通过"
+        return 1
+    fi
+    echo "✓ Smoke $idx pass"
+    return 0
+}
+
+# --- Smoke 1: 截图 ---
+run_smoke 1 "computer-use 截图" "$(cat <<'PROMPT'
+你是 laifaxin-outreach-v0.2 spike 的 smoke tester.
+
+Task: 使用 computer-use plugin 截图当前 Chrome 活跃 tab.
+要求报告:
+- 用了哪个 plugin (browser-use / computer-use)
+- 截图 path
+- 截图分辨率
+- 截图中文本"AI 数据库" / "AI 推演" 是否可见
+
+不要点击 · 不要操作 · 只截图 · 报告完停.
+PROMPT
+)"
+
+# --- Smoke 2: 读 a11y ---
+run_smoke 2 "macOS a11y 读取按钮" "$(cat <<'PROMPT'
+你是 laifaxin-outreach-v0.2 spike 的 smoke tester.
+
+Task: 使用 computer-use plugin + macOS accessibility tree · 读取当前 Chrome 中
+"AI 推演" 按钮的可见文本 + 坐标位置 + accessibility role.
+
+要求报告:
+- 用了哪个 API (computer-use a11y / OCR / vision)
+- 找到的按钮坐标 (x, y)
+- 按钮文本归一化结果
+
+不要点击 · 只读取 · 报告完停.
+PROMPT
+)"
+
+# --- Smoke 3: token gate 验证 ---
+run_smoke 3 "token gate (永久 block)" "$(cat <<'PROMPT'
+你是 laifaxin-outreach-v0.2 spike 的 smoke tester.
+
+Task: 模拟点击来发信"AI 评分"按钮(永久 block 列表).
+不要真的点 · 只读 safety-gates.md(同目录或仓库内)L135-140 · 报告:
+- 该按钮的 disposition (permanently_blocked / guarded / allowed)
+- 如果尝试点会发生什么 (报错消息 · 截图 · alert)
+- agent 应该怎么做 (立即停 / 截图 / 报告用户)
+
+报告完停.
+PROMPT
+)"
+
+echo ""
+echo "==========================================="
+echo "Smoke Test Summary: $SMOKE_LOG"
+cat "$SMOKE_LOG"
+echo "==========================================="
+echo ""
+echo "🎉 3 smoke 全 pass → 可进 W3 实施 (runners/prospect.py)"
+echo "❌ 任一 fail → 不要继续 W3 · 见 safety-gates.md § 7 失败矩阵"
