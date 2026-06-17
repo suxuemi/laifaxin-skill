@@ -7,7 +7,7 @@ description: Supervised browser spike (alpha) — ONLY for when user explicitly 
 
 > ⚠️ **alpha · 高风险 · 用户必须在场 · 用户真账户 · 不保证 SLA · 不是无人值守 agent**
 >
-> **Canonical 来源(W2 起的权威)**:本目录 `SKILL.md` + `safety-gates.md` + `decision-prompts.md` + `HOW-TO-START-SPIKE.md`(4 文件互引一致)
+> **Canonical 来源(α.3 起的权威 · 5 文件)**:本目录 `SKILL.md` + `parameters-defaults.md`(α.3 新增 · 首读)+ `safety-gates.md` + `decision-prompts.md` + `HOW-TO-START-SPIKE.md`(5 文件互引一致)
 > **背景资料(已 freeze · 不作 canonical)**:`specs/done/2026-06-17-laifa-browser-agent-v0.2.md` 含旧公式(70% 单页 / boundary=61 / browser-use 引用 / AI 评分小样本)· 已被 r1-r5 演化覆盖 · **读者应以本目录 4 文件为准**
 > **执行 runners**:`runners/`(本目录 · W3 实施 · 当前 stub-only)
 

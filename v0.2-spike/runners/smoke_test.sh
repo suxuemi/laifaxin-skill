@@ -43,13 +43,17 @@ run_smoke() {
     read -p "Codex 报告了什么? 输 'pass' / 'stub_pass' / 'fail' / 'skip': " -r RESULT
     echo "[Smoke $idx] $name: $RESULT" >> "$SMOKE_LOG"
 
-    # r6 必修 · stub_pass 仅 W2 阶段允许 · smoke 3 controller 未实现时报告 "stub_pass"
+    # r7 必修 · stub_pass **仅 smoke 3 + W2 阶段**允许 · smoke 1/2 必须真 pass
     if [ "$RESULT" = "stub_pass" ]; then
+        if [ "$idx" != "3" ]; then
+            echo "❌ Smoke $idx 不允许 stub_pass(仅 smoke 3 可)· 立即中止"
+            exit 1
+        fi
         if [ "${V02_STAGE:-W2}" = "W2" ]; then
-            echo "⚠️ Smoke $idx stub_pass(W2 阶段允许 · W3 必须真 pass)"
+            echo "⚠️ Smoke 3 stub_pass(W2 阶段允许 · W3 必须真 pass)"
             return 0
         else
-            echo "❌ W3 阶段不接受 stub_pass · 必须真 pass · 立即中止"
+            echo "❌ W3 阶段 smoke 3 不接受 stub_pass · 必须真 pass · 立即中止"
             exit 1
         fi
     fi

@@ -89,37 +89,52 @@ class V02SpikeRunner:
         await self.safety.safe_click(semantic="立即查看", index=chosen)
 
         # 5. 翻页 sequential + LLM 节点 2(每页)· 对齐 decision-prompts.md § 2.4 新 contract
-        #    page_history 时机:DecisionCaller **内部**先 append 当前页 + accuracy,再跑 decision policy
-        #    所以 stub 内 page_history 反映"截至上一页"· DecisionCaller 入参也含 prev_page_accuracy
-        page_history = []   # 累积"已 decide 完"的历史(不含正在 decide 的当前页)
+        # ⚠️ r7 必修 · page_history 单一所有者 = runner
+        #    runner 在 self.decision.call() **之前** 先调 LLM 拿 accuracy + append · 然后 call(policy)
+        #    DecisionCaller 不再内部 append · 它只跑 policy 不动 history
+        page_history = []   # runner 唯一 append · 含已 decide 完的所有页(包括当前页)
         prev_acc = None
         boundary_page = None
         chosen_audience_id = chosen   # chosen 是 audience_index 整数 · LLM 节点 1 输出
         for page in range(1, 1000):
             rows = await self.read_current_page()
-            decision_2 = await self.decision.call(
+
+            # ⚠️ r7 必修 · runner 流程: ① 先 LLM eval 拿 accuracy → ② append page_history → ③ 跑 policy
+            # 这样 page_history 在 call(policy) 之前已含当前页 · Hopeless 的 cumulative_avg 可算
+            parse_result = await self.decision.eval_node(
                 node="per_page_accuracy",
                 inputs={
                     "page_number": page,
                     "rows": rows,
                     "product_positioning": self.product,
-                    "audience_context": {"audience_id": chosen_audience_id},   # 结构化 · 不传整数
+                    "audience_context": {"audience_id": chosen_audience_id},
                     "cumulative_pages_read": page,
-                    "prev_page_accuracy": prev_acc,   # None on first page
+                    "prev_page_accuracy": prev_acc,
                 },
-                page_history=page_history,             # ⚠️ runner 自己负责 append 当前页(r6 必修)· DecisionCaller 不再内部 append
+                effective_config=self.effective_config,   # r7 必修 · 注入参数
+            )
+            curr_acc = parse_result.parsed["accuracy"]    # schema 保证含 accuracy
+
+            # ⚠️ 唯一 append 点(r7 必修):runner 在 policy 之前 append 当前页
+            page_history.append({"page": page, "accuracy": curr_acc})
+
+            # 跑 policy(注入已含本页的 page_history)
+            decision_2 = await self.decision.run_policy(
+                node="per_page_accuracy",
+                parsed=parse_result.parsed,
+                inputs={
+                    "page_number": page,
+                    "prev_page_accuracy": prev_acc,
+                },
+                page_history=page_history,
+                effective_config=self.effective_config,   # r7 必修
             )
 
             # ⚠️ 必须先判 final_disposition.type · Failure 路径可能没 payload
             disp_type = decision_2.final_disposition.type
             if disp_type == "Failure":
-                return await self.handle_fail_closed(decision_2)   # 先于 payload 读取
+                return await self.handle_fail_closed(decision_2)
 
-            # 此处保证 final_disposition.payload 有 accuracy(Continue / BoundaryReached / Hopeless 都填)
-            curr_acc = decision_2.final_disposition.payload.get("accuracy")
-            # ⚠️ 唯一 append 点(r6 必修):runner 在 next iteration call 之前 append 当前页
-            # 下一轮 page_history 传入 DecisionCaller 时已含本页 · len ≥ 1
-            page_history.append({"page": page, "accuracy": curr_acc})
             prev_acc = curr_acc
 
             if disp_type == "BoundaryReached":

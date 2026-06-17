@@ -38,12 +38,9 @@ boundary_low:
   used_in: "decide_per_page() · BOUNDARY_LOW"
   constraint: "MUST be < boundary_high - 0.10"
 
-llm_node_1_confidence:
-  default: 0.70
-  range: [0.50, 0.95]
-  type: float
-  rationale: "选客群节点的 confidence threshold · 低于此值召人工"
-  override_via: conversation
+# ⚠️ r7 删除 · 死参数(decision-prompts § 6.2 明示 confidence 不参与决策门 · 只入 audit)
+# llm_node_1_confidence:
+#   default: 0.70 ...
 
 llm_node_3_inquiry_auto_threshold:
   default: 0.85
@@ -61,27 +58,11 @@ llm_node_3_inquiry_flag_threshold:
   constraint: "MUST be < llm_node_3_inquiry_auto_threshold"
 ```
 
-## § 2 · 跟进节奏类(spec § 0 #6 / HOW-TO § 3 引用)
+## § 2 · ~~跟进节奏类~~(r7 删除 · alpha scope-out)
 
-```yaml
-sequence_rounds:
-  default: 4
-  range: [3, 12]
-  type: integer
-  rationale: "智能跟进计划轮次数 · 第 4 轮后都是 +30d"
-  override_via: conversation
-  used_in: "HOW-TO 跟进节奏建议"
-
-sequence_intervals_days:
-  default: [0, 7, 15, 30]
-  type: array
-  format: "[第1立即, +7d, +15d, +30d, +30d, ...]"
-  rationale: "Tony § 0 #6 拍板节奏 · 第 4 轮起都 +30d 直到 sequence_rounds 用完"
-  override_via: conversation
-  example_overrides:
-    - "[0, 5, 10, 20]"   # 更激进
-    - "[0, 14, 30]"      # 更克制 · 3 轮
-```
+> ⚠️ **r7 删除**:跟进节奏属于"智能跟进计划" · v0.2 alpha **scope-out** 永久 block
+> · 这些参数没有本次 run 执行消费者 · 不应进启动对话(噪音)
+> · 未来 v0.3+ 解封 sequence scope 时再恢复
 
 ## § 3 · 保存类(SKILL.md § 4 / spec § 0 #9 引用)
 
@@ -171,15 +152,16 @@ max_runs_per_day:
   rationale: "防 dogfood 失控"
   override_via: conversation
 
+# r7 一致性修正:permanently_blocked / scope_out 是 **frozen**(用户不可改)· 不是"可放宽不可越界"
 permanently_blocked_actions:
-  default: "frozen"                   # 用户**不可**override
   type: frozen
+  override_via: never                 # r7 明示 · 用户改请求 → Codex 拒绝并解释
   rationale: "永久 block 列表(发送/激活/删除/导出/黑名单/退订/AI 评分)· scope out · 不接受用户改"
 
 scope_out_modules:
-  default: "frozen"                   # 用户**不可**override
   type: frozen
-  rationale: "段 3/4/5 邮件模板/智能跟进/邮件群发 永久 scope out"
+  override_via: never
+  rationale: "段 3/4/5 邮件模板/智能跟进/邮件群发 永久 scope out · 不接受用户改"
 ```
 
 ## § 6 · Promote 类(HOW-TO § 6.3 引用)
@@ -219,13 +201,9 @@ v01_baseline_minutes:
 ```yaml
 llm_model:
   default: "gpt-5.4"
-  type: string
-  rationale: "Codex CLI 内部 LLM · 见 ~/.codex/config.toml"
-  override_via: conversation
-  alternatives:
-    - "gpt-5.4"
-    - "claude-opus-4-7"               # 若 Codex 支持切换
-  warning: "切换 model 会破坏 r1-r6 调优数据 · alpha 阶段保持 gpt-5.4"
+  type: frozen   # r7 改 frozen · alpha 期不可改(对齐 decision-prompts § 6.2)
+  rationale: "Codex CLI 内部 LLM · 见 ~/.codex/config.toml · alpha 期锁定 gpt-5.4 减少变量"
+  warning: "切换 model 会破坏 r1-r7 调优数据 · v0.3+ 再解封"
 
 llm_max_retries:
   default: 1
@@ -271,13 +249,28 @@ user_overrides:
   - param: boundary_high
     default: 0.80
     user_value: 0.85
+    original_utterance: "boundary 改 0.85/0.65"     # r7 必修 · 用户原话
+    normalized_value: 0.85                            # 解析后值
     at: 2026-06-18T20:00:00+08:00
     constraint_passed: true
-  - param: emails_per_company
+    rejection_reason: null                            # 接受 · 无 rejection
+  - param: token_expire_minutes
     default: 5
-    user_value: 7
+    user_value: 15                                    # 超 hard_ceiling 10
+    original_utterance: "token 改 15 分钟"
+    normalized_value: 15
     at: 2026-06-18T20:00:00+08:00
-    constraint_passed: true
+    constraint_passed: false                          # 不接受
+    rejection_reason: "exceeds hard_ceiling (10)"     # r7 必修 · 拒绝原因
+    applied_fallback: 5                               # 退回 default
+
+# effective_config 独立顶层字段 · 整个 run 真正用的 config(r7 必修 · 持久化)
+effective_config:
+  boundary_high: 0.85                                 # 接受了 user override
+  boundary_low: 0.65
+  token_expire_minutes: 5                             # rejected · fallback to default
+  emails_per_company: 5                               # default
+  # ... 全 § 1-7 参数
 ```
 
 ## § 10 · 关联

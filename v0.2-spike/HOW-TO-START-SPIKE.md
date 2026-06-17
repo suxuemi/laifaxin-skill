@@ -329,22 +329,11 @@ jq -s '
 ' raw/prospecting/*/runs/*/run.json
 
 # 条件 ④ 单独跑(对比 v0.1 baseline)· 需 Tony 手填 baseline 时长
-# α.3 起从 effective_config 读(parameters-defaults.md § 6)· 若 run.json 内有 user_overrides 则用 user_value
-BASELINE_V01_MINUTES=$(jq -s '.[0].effective_config.v01_baseline_minutes // 45' raw/prospecting/*/runs/*/run.json | head -1)
-# default 45 · 实测 v0.1 手动模式跑通段 1+2 耗时
+# α.3 起所有 promote 阈值从 effective_config 读(parameters-defaults.md § 6)· 实际逻辑在上方 jq 脚本
 LATEST_AVG_DURATION=$(jq -s '
   sort_by(.started_at) | reverse | .[:5] | map(.duration_seconds) | add / length / 60
 ' raw/prospecting/*/runs/*/run.json)
-PROMOTE_PCT=$(jq -s '.[0].effective_config.promote_duration_reduction_pct // 40' raw/prospecting/*/runs/*/run.json | head -1)
-REDUCTION=$(echo "scale=2; ($BASELINE_V01_MINUTES - $LATEST_AVG_DURATION) / $BASELINE_V01_MINUTES * 100" | bc)
-echo "耗时减少: ${REDUCTION}% (≥ ${PROMOTE_PCT}% 才达标 · default 40 · 可被 user_override 覆盖)"
-
-# r6 必修:promote 必须**条件 ①②③ AND ④ 才放行**(不是 ①②③ pass 就 ✅)
-if [ "$(echo "$REDUCTION >= 40" | bc)" = "1" ] && [ $? -eq 0 ]; then
-  echo "✅ 4 条全过 · 真正可 promote(条件 ① 已在前 jq 检 · ④ duration 也 pass)"
-else
-  echo "❌ 条件 ④ duration 未达标 · 即便前 3 条 pass · 也不可 promote"
-fi
+# promote 4 条 AND 在上方 jq 脚本已合并 · 不再重复
 ```
 
 ## § 7 · 关联

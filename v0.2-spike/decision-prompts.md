@@ -11,12 +11,17 @@ description: v0.2 alpha 浏览器 agent 3 个 LLM 决策节点 · 输出 contrac
 
 # Decision Prompts · v0.2 alpha(r1/r2/r3/r4 累积)
 
-> **Loader contract**(r4 必修):本文 markdown 含 5 类内容,**loader 都要解析**:
-> 1. ` ```yaml ` blocks → schema / disposition contracts
+> **Loader contract**(r4 必修 · r7 修正):本文 markdown 含 5 类内容,**loader 都要解析**:
+> 1. ` ```yaml ` blocks → schema / disposition contracts(按段分发到节点 1/2/3)
 > 2. ` ```python ` blocks → decision policy(`decide()` 函数体)
-> 3. 普通 prose code fence(无语言标识)→ LLM prompts(节点 1/2/3 的 prompt 文本)
-> 4. ` ```yaml audit_entry ` block → audit schema
+> 3. 普通 prose code fence(无语言标识)→ LLM prompts(节点 1/2/3 的 prompt 文本)· **DecisionCaller 必须 prepend § 1.2 strict rules 到每个 prompt 之前**
+> 4. **§ 4 顶层 audit_entry yaml block**(不需要特殊 tag · 由段标题 § 4 识别)→ audit schema · runner 用此 schema 写 llm_logs.jsonl
 > 5. inline 字段引用(如 `prev_page_accuracy`) → input/output 字段名
+>
+> **运行时 effective_config 注入合同**(r7 必修):
+> - `DecisionCaller.__init__(parameters_defaults_path)` 加载默认参数
+> - `runner` 启动对话产出 user_overrides → `DecisionCaller.set_effective_config(effective_config)`
+> - 每次 `eval_node` / `run_policy` 调用时 · DecisionCaller 内部把 `effective_config` 注入到 policy 闭包 · 替换硬编码值
 >
 > 故 `DecisionCaller.from_md_yaml_blocks()` 名字不准确 · **实际是 `from_md_sections()`** · 按段标题(§ 1.x / § 2.x / § 3.x)分发到对应节点。
 
@@ -65,7 +70,7 @@ inputs:
 
 ### 1.2 Prompt(中文 · 紧)· 全节点共通 strict rules
 
-> **全节点 strict output rules**(节点 1/2/3 都遵守):
+> **全节点 strict output rules**(节点 1/2/3 都遵守 · DecisionCaller 加载 prompt 时**必须 prepend 这段**到每个节点 prompt fence 内 · r7 必修):
 > - Return raw YAML.
 > - NO code fences (no ```).
 > - NO comments anywhere (no `#`).
@@ -311,43 +316,44 @@ def decide_per_page(parsed, inputs, page_history):
     ACCURATE_HIGH = effective_config["boundary_high"]        # default 0.80
     BOUNDARY_LOW = effective_config["boundary_low"]          # default 0.60
 
-    # ---- page_history 所有权(r6 必修 · 单一所有者)
-    # ⚠️ DecisionCaller **不再**内部 append · 改为 runner 在 call **之前** append 当前页
-    # runner stub:在 self.decision.call() 之前已 page_history.append({page, accuracy=<previous parse>})
-    # 故下面 page_history 包含当前页 · len ≥ 1(防 div0)
-    # 避免 runner + DecisionCaller 双 append 造成 cumulative_avg 偏差
+    # ---- page_history 所有权(r7 必修 · 单一所有者 = runner)
+    # ⚠️ DecisionCaller **不**内部 append · DecisionCaller 只跑 policy · 不动 history
+    # ⚠️ runner 流程:① eval_node 拿 accuracy → ② append → ③ run_policy(policy 读 page_history)
+    # 故 policy 看到的 page_history 已含当前页 · len ≥ 1(防 div0)
 
+    # ⚠️ r7 必修 · 所有 return 必须与 § 2.2 disposition payload schema 一致
+    # 字段名:Continue/Hopeless/BoundaryReached 都填 accuracy · Hopeless 用 cumulative_avg(不是 avg)
     # ---- Hopeless 优先判 · 防 r2 #3 不可达 ----
-    # 前 5 页累积平均 < BOUNDARY_LOW · 触发 hopeless(早期就垃圾)
     if len(page_history) > 0 and len(page_history) <= 5:
         cumulative_avg = sum(p.accuracy for p in page_history) / len(page_history)
         if cumulative_avg < BOUNDARY_LOW:
-            return Hopeless(reason="cumulative_avg_low_in_first_5_pages",
-                            avg=cumulative_avg)
+            return Hopeless(
+                accuracy=current,
+                cumulative_avg=cumulative_avg,
+                reason="cumulative_avg_low_in_first_5_pages"
+            )
 
     # ---- Continue 准 ----
     if current >= ACCURATE_HIGH:
-        return Continue(direction="next_page", note="accurate")
+        return Continue(accuracy=current, note="accurate")
 
-    # ---- Boundary 双页确认 · 计算正确(r2 #2 必修)----
-    # 双页连续 < BOUNDARY_LOW · "boundary 在第一个低页之前"
-    # page-1 = 第一个低页 / page = 第二个低页(当前)
-    # 所以 boundary = page - 2(最后一个准页) · 保存范围 = page_history[boundary] 累积
+    # ---- Boundary 双页确认 ----
     if current < BOUNDARY_LOW and (prev is not None and prev < BOUNDARY_LOW):
-        boundary_page = page - 2   # 最后一个"准"页 · 双页连续低之前一页
+        boundary_page = page - 2
         return BoundaryReached(
+            accuracy=current,
             at_page=boundary_page,
             save_companies=boundary_page * 10,
             note="two_consecutive_low_pages_confirm"
         )
 
     # ---- Suspect boundary · 单页低 · 翻下一页确认 ----
-    if current < BOUNDARY_LOW:   # prev is None or prev >= BOUNDARY_LOW(已隐含)
-        return Continue(direction="next_page", note="suspect_boundary_need_confirm")
+    if current < BOUNDARY_LOW:
+        return Continue(accuracy=current, note="suspect_boundary_need_confirm")
 
     # ---- 中间区 · 翻下一页(不停)----
     if BOUNDARY_LOW <= current < ACCURATE_HIGH:
-        return Continue(direction="next_page", note="middle_zone_unstable")
+        return Continue(accuracy=current, note="middle_zone_unstable")
 
     return Failure(reason="unreachable_policy_branch_should_never_hit")
 ```
