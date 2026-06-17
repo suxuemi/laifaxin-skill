@@ -275,13 +275,38 @@ raw/prospecting/<product>/runs/<run_id>/
 每周汇总 `raw/prospecting/*/runs/*/run.json`(自动脚本可选):
 
 ```bash
-# alpha → beta 4 条硬条件(spec § 11.1 #5)
-for run in raw/prospecting/*/runs/*/run.json; do
-  jq -r '[.result, .audit.user_interventions | length, .audit.anti_bot_trigger_count] | @tsv' "$run"
-done | tail -5 | awk '
-  $1=="success" && $2<=1 && $3<3 { pass++ }
-  END { exit(pass>=5 ? 0 : 1) }'
-echo "5 次连续达标:$?(0=可 promote / 1=未达标)"
+# alpha → beta 4 条硬条件(spec § 11.1 #5 完整):
+#   ① 5 次连续 result=success
+#   ② user_interventions ≤ 1 次/run 平均
+#   ③ 误操作率 = 0 (permanently_blocked 列表 0 命中)
+#   ④ 客户开发耗时减少 ≥ 40% vs v0.1 manual baseline
+
+# r2 修正:按 started_at 时间序排序(而非 glob 顺序)· 失败时 reset connection
+jq -s '
+  # 全 run 按 started_at desc 排序
+  sort_by(.started_at) | reverse |
+  # 找最近 N 个连续 success(N=5)· 失败立即 reset
+  reduce .[] as $r ([];
+    if $r.result == "success" and
+       ($r.audit.user_interventions | length) <= 1 and
+       ($r.audit.permanently_blocked_hits // 0) == 0
+    then . + [$r]
+    else []  # 失败立即 reset
+    end
+  ) |
+  if length >= 5
+  then "✅ 可 promote · 最近 5 次连续:" + (.[-5:] | map(.run_id) | tostring)
+  else "❌ 未达标 · 当前连续:" + (length | tostring) + "/5"
+  end
+' raw/prospecting/*/runs/*/run.json
+
+# 条件 ④ 单独跑(对比 v0.1 baseline)· 需 Tony 手填 baseline 时长
+BASELINE_V01_MINUTES=45   # 实测 v0.1 手动模式跑通段 1+2 耗时
+LATEST_AVG_DURATION=$(jq -s '
+  sort_by(.started_at) | reverse | .[:5] | map(.duration_seconds) | add / length / 60
+' raw/prospecting/*/runs/*/run.json)
+REDUCTION=$(echo "scale=2; ($BASELINE_V01_MINUTES - $LATEST_AVG_DURATION) / $BASELINE_V01_MINUTES * 100" | bc)
+echo "耗时减少: ${REDUCTION}% (≥ 40% 才达标)"
 ```
 
 ## § 7 · 关联
