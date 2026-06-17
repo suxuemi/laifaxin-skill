@@ -58,7 +58,13 @@ echo ""
 echo "## Check 5: SkyComputerUseClient 通知通道"
 NOTIFY=$(grep "^notify" ~/.codex/config.toml 2>/dev/null | head -1)
 echo "  notify 配置: ${NOTIFY:-(未设)}"
-check "notify 配置存在" "[ -n '$NOTIFY' ]"
+if [ -z "$NOTIFY" ]; then
+    echo "  ✗ notify 未配置 · 用户审批流不可用"
+    FAIL=$((FAIL+1))
+else
+    echo "  ✓"
+    PASS=$((PASS+1))
+fi
 
 echo ""
 echo "## Check 6: Chrome web.laifaxin.com 登录态(手动确认)"

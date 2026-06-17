@@ -193,11 +193,11 @@ state_rules:
       state_transition: "off → on"
     action: permanently_blocked
 
-  # AI 评分按钮 hover 预览(避免 OCR 漏 fp)
+  # AI 评分按钮 hover 预览(r5 必修 · 改用真可用 primitive · 不用 element_class)
   - rule_id: ai_rating_hover
     detection:
-      page_route_match: "/search/refine-search"
-      element_class_contains: ["ai-rating-button", "rating-trigger"]
+      page_url_match: "/search/refine-search"      # chrome.tab_url() 拿到
+      button_text_contains_any: ["AI 评分", "评分", "开始评分"]   # OCR + a11y 拿到
     action: permanently_blocked
 
   # active sequence 上的 "确认添加"(r1 #D2.4 高优先)
@@ -232,6 +232,26 @@ state_rules:
      │ chrome  │          │ computer-use │
      │ executor     │          │ executor     │
      └──────────────┘          └──────────────┘
+```
+
+### 4.0 Token canonical payload(r5 必修 · issue + consume + click 三处统一)
+
+```python
+# canonical_payload 是唯一序列化函数 · 三处都用同一调用
+def canonical_payload(button_target):
+    """Stable serialization for HMAC signature."""
+    return json.dumps({
+        "selector_kind": button_target.kind,    # "a11y_node" | "coords"
+        "semantic": button_target.semantic,     # 按钮文本 normalize
+        "page_url": button_target.page_url,
+        "page_title": button_target.page_title,
+    }, sort_keys=True)
+
+# Usage(必须保证 issue 和 consume 用同一 payload):
+payload = canonical_payload(button_target)
+token = controller.token_store.issue(action_id, payload)
+# ... user approves ...
+controller.token_store.consume(token.id, action_id, payload)   # ← 同 payload · 不用 button_target
 ```
 
 ### 4.1 Token store(待 W3 落地)
@@ -308,6 +328,9 @@ def safe_click(button_target, run_ctx):
         macos_a11y = await computer_use.accessibility_tree()
     except Exception:
         macos_a11y = None                                  # 截图坐标兜底走得到
+
+    # locate_by_accessibility MUST tolerate None macos_a11y(r5 必修)
+    # 实现合同:if macos_a11y is None: return None  (退到截图坐标兜底分支)
     button_node = locate_by_accessibility(macos_a11y, button_target)
 
     # actuation_target 记录最终点击用什么(coords or a11y node) · r3 #1 必修
@@ -341,9 +364,11 @@ def safe_click(button_target, run_ctx):
     if normalized in permanently_blocked:
         return SafetyError("permanently blocked: " + normalized, screenshot)
     if matched_guarded:
-        token = await controller.await_user_token(action_id=matched_guarded.action_id, payload=button_target)
+        # r5 必修 · issue + consume + click 三处用同一 canonical_payload
+        payload = canonical_payload(button_target)
+        token = await controller.await_user_token(action_id=matched_guarded.action_id, payload=payload)
         if not token: return SafetyError("no token / abandoned")
-        consumed = controller.token_store.consume(token.id, matched_guarded.action_id, canonical_payload(button_target))
+        consumed = controller.token_store.consume(token.id, matched_guarded.action_id, payload)
         if not consumed: return SafetyError("token consume failed")
         # 真实点击
         await computer_use.click(actuation_target)         # r3 #1 · 真用 actuation_target(a11y_node 或 coords)

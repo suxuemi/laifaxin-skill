@@ -110,6 +110,7 @@ warnings: []
 ```yaml
 schema:
   type: object
+  additionalProperties: false   # r5 必修 · no extra keys
   required: [chosen, evidence_snippets, applied_rules, why_not_top_alt, warnings]
   properties:
     chosen:
@@ -254,6 +255,7 @@ evidence_snippets:
 ```yaml
 schema:
   type: object
+  additionalProperties: false   # r5 必修 · no extra keys
   required: [total_rows, on_target_count, on_target_indices, not_on_target_indices, flagged_indices, accuracy, evidence_snippets]
   properties:
     total_rows: { type: integer, enum: [10] }   # 来发信每页恒 10 行
@@ -286,6 +288,13 @@ cross_field_validation:
 ```
 
 ### 2.4 Decision Policy · 双页连续跌破 + 80% 对齐(r1 + r2 必修)
+
+> **r5 必修**:policy 返回的 Continue/Hopeless/BoundaryReached 必须**字段完全对齐 § 2.2 disposition payload schema**(都含 `accuracy`)。下面伪代码示意 · 实现时按 § 2.2 填:
+> ```python
+> Continue(accuracy=current, note="...")
+> Hopeless(accuracy=current, cumulative_avg=avg, reason="...")
+> BoundaryReached(accuracy=current, at_page=page-2, save_companies=(page-2)*10, note="...")
+> ```
 
 ```python
 def decide_per_page(parsed, inputs, page_history):
@@ -397,6 +406,8 @@ sequence_round_aware: true
 
 ```yaml
 schema:
+  type: object                    # r5 必修 · 显式 type
+  additionalProperties: false     # r5 必修 · no extra keys
   required: [tag, evidence_keywords, evidence_quotes, candidate_tags, sequence_round_aware]
   properties:
     tag:
@@ -541,16 +552,19 @@ def call_with_repair(node_name, inputs, max_retries=1):
     if not errors:
         return parsed, raw, retry_count=0
 
-    # repair retry
+    # repair retry · r5 必修:完整重复 strict rules
     repair_prompt = f"""
     Previous output failed validation:
     {format_errors(errors)}
 
-    OUTPUT RULES(STRICT · REPEAT):
+    OUTPUT RULES(STRICT · REPEAT FULL · MUST FOLLOW):
     - Return raw YAML.
-    - NO code fences.
+    - NO code fences (no ```).
+    - NO comments anywhere (no #).
+    - NO placeholder syntax like <...>.
     - NO explanation paragraphs.
-    - Match schema EXACTLY.
+    - Output exactly ONE YAML document matching the schema.
+    - Match schema EXACTLY (no extra keys, no missing required keys).
 
     Return ONLY the corrected YAML now:
     """

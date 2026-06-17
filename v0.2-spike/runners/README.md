@@ -186,7 +186,8 @@ def test_llm_node_2_boundary_detection():
     rows_high_match = [{"description": "We import LED outdoor lighting from China"} for _ in range(10)]
     result = caller.call("per_page_accuracy", inputs={"rows": rows_high_match, "prev_page_accuracy": 0.85, ...})
     assert result.final_disposition.type in ["Continue", "BoundaryReached", "Hopeless", "Failure"]
-    assert 0.0 <= result.payload["accuracy"] <= 1.0
+    # r5 #1 修 · accuracy 在 final_disposition.payload · 不是 result.payload
+    assert 0.0 <= result.final_disposition.payload["accuracy"] <= 1.0
 
 def test_llm_node_2_two_page_boundary_calculation():
     # r2 #2 必修 · 双页连续 < 0.6 · boundary_page = page - 2(最后准页)

@@ -6,10 +6,10 @@ description: Supervised browser spike (alpha) — ONLY for when user explicitly 
 # Laifaxin Outreach v0.2 · Supervised Browser Spike (alpha)
 
 > ⚠️ **alpha · 高风险 · 用户必须在场 · 用户真账户 · 不保证 SLA · 不是无人值守 agent**
-> 设计依据:`specs/done/2026-06-17-laifa-browser-agent-v0.2.md`(本仓)
-> 安全模型:`safety-gates.md`(本目录)
-> 决策框架:`decision-prompts.md`(本目录)
-> 执行 runners:`runners/`(本目录 · W3 实施)
+>
+> **Canonical 来源(W2 起的权威)**:本目录 `SKILL.md` + `safety-gates.md` + `decision-prompts.md` + `HOW-TO-START-SPIKE.md`(4 文件互引一致)
+> **背景资料(已 freeze · 不作 canonical)**:`specs/done/2026-06-17-laifa-browser-agent-v0.2.md` 含旧公式(70% 单页 / boundary=61 / browser-use 引用 / AI 评分小样本)· 已被 r1-r5 演化覆盖 · **读者应以本目录 4 文件为准**
+> **执行 runners**:`runners/`(本目录 · W3 实施 · 当前 stub-only)
 
 ## § 0 · Trigger Precedence(触发优先级 · 防抢 v0.1)
 
@@ -75,9 +75,37 @@ out_of_scope:                       # 任何操作 = 立即 stop + alert
   └── llm_logs.jsonl                                  # 每节点 LLM 输入/输出/validation/retry/failure_diagnostics
 
 raw/prospecting/<product>/runs/<run_id>/            # 入 repo(跨设备审计)
-  ├── run.json                                        # 结构化 run 元数据(spec § 6.2 schema)
+  ├── run.json                                        # 结构化 run 元数据 · schema 见 § 3.1(spec § 6.2 是旧版,以本节为准)
   ├── summary.md                                      # 人读摘要(从 run.json 派生)
   └── artifacts.json                                  # 指针 + screenshots/llm_logs hash list
+```
+
+### § 3.1 run.json schema(W2 canonical · 覆盖 spec § 6.2 旧版)
+
+```yaml
+run_id: timestamp-slug-<n>             # 不是 Codex SESSION_ID(UUID)
+started_at / finished_at / duration_seconds
+result: success | failed | aborted | partial
+inference:
+  chosen_audience: { audience_index, audience_slug, name }
+sampling:
+  method: sequential_paging
+  pages_read: int
+  per_page_accuracy: [{page, accuracy}]   # array
+  boundary_page: int                      # 最后准页(双页 < 0.6 之前)
+  save_companies: int                     # = boundary_page × 10
+saving:
+  task_id, saved_companies, saved_emails, tags_applied
+audit:
+  user_interventions: [{at, reason, response}]
+  warnings: []
+  permanently_blocked_hits: int           # 0 = 没碰过永久 block(promote 必要)
+  anti_bot_trigger_count: int
+  screenshots_dir: ~/.codex/runs/<run_id>/screenshots/
+  llm_logs: ~/.codex/runs/<run_id>/llm_logs.jsonl
+  artifacts_manifest: artifacts.json
+failure_diagnostics:                      # null if successful
+  error_type / invalid_fragment / repair_attempts / taken_over_by_human / final_action
 ```
 
 **每个 LLM 节点失败也要写 `failure_diagnostics`**:error_type / invalid_fragment / repair_attempts / taken_over_by_human / final_action(对齐 decision-prompts.md § 4)。
@@ -122,7 +150,7 @@ LLM agent 触发本 SKILL 后,**按顺序读**:
 
 ## § 7 · 关联
 
-- spec(已归档):`specs/done/2026-06-17-laifa-browser-agent-v0.2.md`
+- spec(已归档 · 背景资料 · **不作 canonical**):`specs/done/2026-06-17-laifa-browser-agent-v0.2.md` · 旧公式已被本目录 4 文件覆盖
 - 关键决策回顾:`wiki/history/2026-06-laifa-browser-agent-v0.2-design.md`
 - safety-gates(本目录)
 - decision-prompts(本目录)
