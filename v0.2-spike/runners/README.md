@@ -208,4 +208,5 @@ def test_llm_node_2_two_page_boundary_calculation():
 - 主 SKILL.md(本目录上一级)
 - safety-gates.md(本目录上一级)
 - decision-prompts.md(本目录上一级)
-- spec:`specs/active/2026-06-17-laifa-browser-agent-v0.2.md`(本仓)
+- spec(已归档):`specs/done/2026-06-17-laifa-browser-agent-v0.2.md`(本仓)
+- 关键决策:`wiki/history/2026-06-laifa-browser-agent-v0.2-design.md`(本仓)

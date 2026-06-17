@@ -390,7 +390,7 @@ synonym_map:
 
 ## § 9 · 一句话总结(对齐 v0.1 风格)
 
-**Alpha scope 严格收缩到搜客+保存 · 其他全 block · 白名单制 + curated synonym + controller-owned token + state rules + browser-use 主路 + computer-use 兜底 · 关键 primitive 待 W3 坐实**
+**Alpha scope 严格收缩到搜客+保存 · 其他全 block · 白名单制 + curated synonym + controller-owned token + state rules + computer-use 主路(macOS a11y + screenshot)+ browser-use 辅助(URL/title 上下文)· 关键 primitive 待 W3 坐实**
 
 ## § 10 · 关联
 
