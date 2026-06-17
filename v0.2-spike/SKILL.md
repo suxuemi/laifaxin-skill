@@ -110,8 +110,8 @@ raw/prospecting/<product>/runs/<run_id>/            # 入 repo(跨设备审计)
 run_id: timestamp-slug-<n>             # 不是 Codex SESSION_ID(UUID)
 started_at / finished_at / duration_seconds
 result: success | failed | aborted | partial
-user_overrides:                        # § 0.5 启动对话产物(α.3 新增)
-  - { param, default, user_value, at, constraint_passed }
+user_overrides:                        # § 0.5 启动对话产物(α.3.3 同 parameters-defaults § 9)
+  - { param, default, user_value, original_utterance, normalized_value, at, constraint_passed, rejection_reason, applied_fallback }
 effective_config:                      # default + overrides 合并后 · 整个 run 真正用的 config
   boundary_high: 0.85                  # 若用户改了 · 否则填 default
   emails_per_company: 7

@@ -95,7 +95,9 @@ class V02SpikeRunner:
         prev_acc = None
         boundary_page = None
         chosen_audience_id = chosen   # chosen 是 audience_index 整数 · LLM 节点 1 输出
-        for page in range(1, 1000):
+        # r9 必修 · 从 effective_config 读 max_boundary_pages
+        max_pages = self.effective_config["max_boundary_pages"]   # default 50 · range [10, 200]
+        for page in range(1, max_pages + 1):
             rows = await self.read_current_page()
 
             # ⚠️ r7 必修 · runner 流程: ① 先 LLM eval 拿 accuracy → ② append page_history → ③ 跑 policy
@@ -144,8 +146,11 @@ class V02SpikeRunner:
             else:   # Continue
                 await self.safety.safe_click(semantic="下一页")
 
-        # 6. 保存范围 = boundary_page × 10(boundary_page 已是最后准页 · 不再 -1)
-        save_count = boundary_page * 10
+        # 6. 保存范围 = effective_config.save_companies_formula 求值
+        # r9 必修 · 不再硬编码 · 公式由 parameters-defaults § 3 提供
+        formula = self.effective_config["save_companies_formula"]   # default "boundary_page * 10"
+        save_count = safe_eval_formula(formula, {"boundary_page": boundary_page})
+        save_count = min(save_count, self.effective_config["max_save_companies"])   # default 1000
         token = await self.request_user_token(
             action="保存",
             params={"count": save_count, "emails_per_company": "5-10"}

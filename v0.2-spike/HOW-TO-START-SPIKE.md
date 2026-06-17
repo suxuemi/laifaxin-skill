@@ -300,40 +300,60 @@ raw/prospecting/<product>/runs/<run_id>/
 每周汇总 `raw/prospecting/*/runs/*/run.json`(自动脚本可选):
 
 ```bash
-# alpha → beta 4 条硬条件(spec § 11.1 #5 完整):
-#   ① 5 次连续 result=success
-#   ② user_interventions ≤ 1 次/run 平均
-#   ③ 误操作率 = 0 (permanently_blocked 列表 0 命中)
-#   ④ 客户开发耗时减少 ≥ 40% vs v0.1 manual baseline
+# alpha → beta 4 条硬条件(α.3.3 完全 effective_config 化):
+#   ① N 次连续 result=success(N = effective_config.promote_consecutive_successes)
+#   ② 最近 N 次**平均** user_interventions ≤ M(M = promote_max_user_interventions_per_run)
+#   ③ 误操作率 = 0(permanently_blocked_hits == 0 · per-run · frozen)
+#   ④ 客户开发耗时减少 ≥ P% vs v0.1 baseline(P = promote_duration_reduction_pct)
 
-# r2 修正:按 started_at 时间序排序(而非 glob 顺序)· 失败时 reset connection
-jq -s '
-  # 全 run 按 started_at 升序 · 然后从尾扫(最近的 run 优先)· 找"最尾段最长连续 success 序列"
-  sort_by(.started_at) |
-  # 从尾向头扫 · 累积"从尾开始的连续 pass 数"
-  reverse |
-  reduce .[] as $r (
-    {streak: 0, broken: false};
+# 从最近一次 run 的 effective_config 读全部阈值 · 无硬编码
+LATEST=$(ls -t raw/prospecting/*/runs/*/run.json 2>/dev/null | head -1)
+[ -z "$LATEST" ] && echo "no runs yet" && exit 1
+
+N=$(jq -r '.effective_config.promote_consecutive_successes // 5' "$LATEST")
+M=$(jq -r '.effective_config.promote_max_user_interventions_per_run // 1' "$LATEST")
+P=$(jq -r '.effective_config.promote_duration_reduction_pct // 40' "$LATEST")
+BASELINE=$(jq -r '.effective_config.v01_baseline_minutes // 45' "$LATEST")
+
+# 条件 ① + ③ 合并:从尾扫连续 success 且 permanently_blocked_hits == 0
+STREAK=$(jq -s --argjson NN "$N" '
+  sort_by(.started_at) | reverse |
+  reduce .[] as $r ({streak: 0, broken: false};
     if .broken then .
     elif $r.result == "success" and
-         ($r.audit.user_interventions | length) <= 1 and
          (($r.audit.permanently_blocked_hits // 0) == 0)
     then .streak = .streak + 1
     else .broken = true
     end
-  ) |
-  if .streak >= 5
-  then "✅ 可 promote · 最近 \(.streak) 次连续 success"
-  else "❌ 未达标 · 最近连续:\(.streak)/5"
-  end
-' raw/prospecting/*/runs/*/run.json
-
-# 条件 ④ 单独跑(对比 v0.1 baseline)· 需 Tony 手填 baseline 时长
-# α.3 起所有 promote 阈值从 effective_config 读(parameters-defaults.md § 6)· 实际逻辑在上方 jq 脚本
-LATEST_AVG_DURATION=$(jq -s '
-  sort_by(.started_at) | reverse | .[:5] | map(.duration_seconds) | add / length / 60
+  ) | .streak
 ' raw/prospecting/*/runs/*/run.json)
-# promote 4 条 AND 在上方 jq 脚本已合并 · 不再重复
+
+# 条件 ② 最近 N 次的**平均** user_interventions
+AVG_INTERV=$(jq -s --argjson NN "$N" '
+  sort_by(.started_at) | reverse | .[:$NN] |
+  map(.audit.user_interventions | length) | if length == 0 then 999 else add / length end
+' raw/prospecting/*/runs/*/run.json)
+
+# 条件 ④ 最近 N 次平均耗时 vs baseline
+AVG_DUR_MIN=$(jq -s --argjson NN "$N" '
+  sort_by(.started_at) | reverse | .[:$NN] |
+  map(.duration_seconds) | if length == 0 then 999 else add / length / 60 end
+' raw/prospecting/*/runs/*/run.json)
+
+REDUCTION=$(echo "scale=2; ($BASELINE - $AVG_DUR_MIN) / $BASELINE * 100" | bc)
+
+# 4 条 AND verdict
+C1=$([ "$STREAK" -ge "$N" ] && echo 1 || echo 0)
+C2=$([ "$(echo "$AVG_INTERV <= $M" | bc)" = "1" ] && echo 1 || echo 0)
+C4=$([ "$(echo "$REDUCTION >= $P" | bc)" = "1" ] && echo 1 || echo 0)
+
+if [ "$C1" = "1" ] && [ "$C2" = "1" ] && [ "$C4" = "1" ]; then
+  echo "✅ 4 条全过 · 可 promote alpha→beta"
+  echo "   streak=$STREAK/$N · avg_interv=$AVG_INTERV/$M · reduction=$REDUCTION%/$P%"
+else
+  echo "❌ 未达标"
+  echo "   ①streak=$STREAK/$N (pass=$C1) · ②avg_interv=$AVG_INTERV/$M (pass=$C2) · ③included in streak · ④reduction=$REDUCTION%/$P% (pass=$C4)"
+fi
 ```
 
 ## § 7 · 关联

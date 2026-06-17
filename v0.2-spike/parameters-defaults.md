@@ -11,11 +11,14 @@ description: v0.2 alpha 全部可调参数 default schema · 用户启动 skill 
 
 # Parameters Defaults · v0.2 alpha(W2 canonical)
 
-> **设计原则**:
+> **设计原则(r3 修正 · 不再前后矛盾)**:
 > 1. **default 写在本文** · 用户改只影响**本次 run** · 不动 markdown
 > 2. **每次 run 必须由 Codex 启动对话**列出 defaults · 问"要改吗"(详见 SKILL.md § 0.5)
-> 3. **效果 config** 写入 `run.json.user_overrides` audit · 复盘可见
-> 4. **强约束有 hard ceiling**(token 过期 / scope out / permanently_blocked)用户可放宽**但不可越界**
+> 3. **运行时配置** 写入 `run.json.effective_config`(整 run 用)+ `run.json.user_overrides`(audit 用户改了什么)
+> 4. **三类参数**:
+>    - `override_via: conversation` + `range` — 用户可改 · 范围内接受
+>    - `override_via: conversation` + `hard_ceiling` — 用户可改 · 但有不可越上限
+>    - `override_via: never` + `type: frozen` — 用户不可改(`permanently_blocked` / `scope_out` / `llm_model`)
 > 5. **不写新 DSL** · 用户自然语言改 · Codex LLM 解析成结构化 override
 
 ## § 1 · 决策阈值类(decision-prompts.md 引用)
