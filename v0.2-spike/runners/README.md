@@ -52,13 +52,14 @@ class V02SpikeRunner:
         self.audit = AuditWriter(self.run_id)
         # safety-gates.md / decision-prompts.md 是文档+数据源(markdown 多类内容)
         # 加载方式: from_md_sections 按 § 段标题分发 · 解析 5 类内容(详见 decision-prompts.md § 0)
-        self.safety = SafetyEnforcer.from_md_sections("safety-gates.md")
-        self.decision = DecisionCaller.from_md_sections("decision-prompts.md")
-        # r8 必修 · effective_config 唯一加载路径(parameters-defaults defaults + user_overrides)
-        self.params_defaults = load_parameters_defaults("parameters-defaults.md")
-        self.effective_config = self.params_defaults.copy()    # 默认值
-        # 启动对话流程后 · runner 调 self.decision.set_effective_config(self.effective_config)
-        # safety 同样需要 · self.safety.set_effective_config(self.effective_config)
+        # r10 钉死 · effective_config 单一所有权 = runner · 一处构建 · 注入所有消费者
+        #   ① 读 defaults → ② 合并 § 0.5 启动对话的 user_overrides → ③ 注入 decision/safety
+        #   DecisionCaller / SafetyEnforcer 都不再自己加载 parameters-defaults · 无 set_effective_config 二段装配
+        defaults = load_parameters_defaults("parameters-defaults.md")
+        self.effective_config = build_effective_config(defaults, user_overrides)   # § 0.5 产物
+        self.audit.write_effective_config(self.effective_config)   # 写 run.json.effective_config
+        self.safety = SafetyEnforcer.from_md_sections("safety-gates.md", effective_config=self.effective_config)
+        self.decision = DecisionCaller.from_md_sections("decision-prompts.md", effective_config=self.effective_config)
         self.browser = ComputerUsePlugin()  # ~/.codex/computer-use/
 
     async def run(self):
@@ -151,11 +152,19 @@ class V02SpikeRunner:
         formula = self.effective_config["save_companies_formula"]   # default "boundary_page * 10"
         save_count = safe_eval_formula(formula, {"boundary_page": boundary_page})
         save_count = min(save_count, self.effective_config["max_save_companies"])   # default 1000
-        token = await self.request_user_token(
-            action="保存",
-            params={"count": save_count, "emails_per_company": "5-10"}
-        )   # Confirm 闸 2
-        await self.execute_save(save_count, token)
+        emails_per_company = self.effective_config["emails_per_company"]            # 整数 · default 5 · range 3-10
+
+        # Confirm 闸 2 · r10 钉死 · 审批单轨:runner 预签 token → 透传给 safe_click(只 consume · gates 不二次 await)
+        pre_signed_token = await self.request_user_token(
+            action="保存联系人",
+            params={"count": save_count, "emails_per_company": emails_per_company},   # 预算预演按 emails 上界估
+        )
+        # 真实保存动作走 safe_click 唯一审批链 · pre_signed_token 透传 · gates 校验 action_id+payload+sig 后只 consume
+        await self.safety.safe_click(
+            semantic="保存联系人",
+            run_ctx=self.run_ctx,
+            pre_signed_token=pre_signed_token,
+        )
 
         # 7. 写回 audit
         await self.audit.finalize(

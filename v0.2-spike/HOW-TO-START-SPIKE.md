@@ -315,13 +315,12 @@ M=$(jq -r '.effective_config.promote_max_user_interventions_per_run // 1' "$LATE
 P=$(jq -r '.effective_config.promote_duration_reduction_pct // 40' "$LATEST")
 BASELINE=$(jq -r '.effective_config.v01_baseline_minutes // 45' "$LATEST")
 
-# 条件 ① + ③ 合并:从尾扫连续 success 且 permanently_blocked_hits == 0
+# 条件 ① 从尾扫连续 success(只看 result · r10 把③拆出独立判)
 STREAK=$(jq -s --argjson NN "$N" '
   sort_by(.started_at) | reverse |
   reduce .[] as $r ({streak: 0, broken: false};
     if .broken then .
-    elif $r.result == "success" and
-         (($r.audit.permanently_blocked_hits // 0) == 0)
+    elif $r.result == "success"
     then .streak = .streak + 1
     else .broken = true
     end
@@ -334,6 +333,12 @@ AVG_INTERV=$(jq -s --argjson NN "$N" '
   map(.audit.user_interventions | length) | if length == 0 then 999 else add / length end
 ' raw/prospecting/*/runs/*/run.json)
 
+# 条件 ③ r10 拆成独立 verdict:最近 N 次 permanently_blocked_hits 全 == 0(误操作率 = 0)
+MAX_BLOCKED=$(jq -s --argjson NN "$N" '
+  sort_by(.started_at) | reverse | .[:$NN] |
+  map(.audit.permanently_blocked_hits // 0) | if length == 0 then 999 else max end
+' raw/prospecting/*/runs/*/run.json)
+
 # 条件 ④ 最近 N 次平均耗时 vs baseline
 AVG_DUR_MIN=$(jq -s --argjson NN "$N" '
   sort_by(.started_at) | reverse | .[:$NN] |
@@ -342,17 +347,18 @@ AVG_DUR_MIN=$(jq -s --argjson NN "$N" '
 
 REDUCTION=$(echo "scale=2; ($BASELINE - $AVG_DUR_MIN) / $BASELINE * 100" | bc)
 
-# 4 条 AND verdict
+# 4 条独立 AND verdict(r10 · ③ 不再折进 streak · 独立 C3)
 C1=$([ "$STREAK" -ge "$N" ] && echo 1 || echo 0)
 C2=$([ "$(echo "$AVG_INTERV <= $M" | bc)" = "1" ] && echo 1 || echo 0)
+C3=$([ "$MAX_BLOCKED" = "0" ] && echo 1 || echo 0)
 C4=$([ "$(echo "$REDUCTION >= $P" | bc)" = "1" ] && echo 1 || echo 0)
 
-if [ "$C1" = "1" ] && [ "$C2" = "1" ] && [ "$C4" = "1" ]; then
+if [ "$C1" = "1" ] && [ "$C2" = "1" ] && [ "$C3" = "1" ] && [ "$C4" = "1" ]; then
   echo "✅ 4 条全过 · 可 promote alpha→beta"
-  echo "   streak=$STREAK/$N · avg_interv=$AVG_INTERV/$M · reduction=$REDUCTION%/$P%"
+  echo "   ①streak=$STREAK/$N · ②avg_interv=$AVG_INTERV/$M · ③max_blocked=$MAX_BLOCKED · ④reduction=$REDUCTION%/$P%"
 else
   echo "❌ 未达标"
-  echo "   ①streak=$STREAK/$N (pass=$C1) · ②avg_interv=$AVG_INTERV/$M (pass=$C2) · ③included in streak · ④reduction=$REDUCTION%/$P% (pass=$C4)"
+  echo "   ①streak=$STREAK/$N (pass=$C1) · ②avg_interv=$AVG_INTERV/$M (pass=$C2) · ③max_blocked=$MAX_BLOCKED 须0 (pass=$C3) · ④reduction=$REDUCTION%/$P% (pass=$C4)"
 fi
 ```
 

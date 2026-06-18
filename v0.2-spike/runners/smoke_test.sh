@@ -123,10 +123,11 @@ echo "Smoke Test Summary: $SMOKE_LOG"
 cat "$SMOKE_LOG"
 echo "==========================================="
 echo ""
-# r8 必修 · 区分真 pass vs W2 stub_pass · r9 修 grep 0 行返回 1 + echo 0 的双结果 bug
-HAS_STUB=$(grep -c "stub_pass" "$SMOKE_LOG" 2>/dev/null)
-HAS_STUB=${HAS_STUB:-0}   # 防空值
-if [ "$HAS_STUB" -gt 0 ] 2>/dev/null; then
+# r8 必修 · 区分真 pass vs W2 stub_pass
+# r10 真修:set -e 下 grep -c 0 命中会以状态 1 退出 · 直接 kill 脚本(${:-0} 接不到)
+#          正解 = `|| true` 吞掉非零退出 · grep -c 无匹配仍打印 "0" · HAS_STUB 干净拿到 0
+HAS_STUB=$(grep -c "stub_pass" "$SMOKE_LOG" 2>/dev/null || true)
+if [ "${HAS_STUB:-0}" -gt 0 ]; then
     echo "⚠️ W2 已通过(含 stub_pass)· **不是** W3 真 readiness · 必须先实施 controller 才能进 W3"
     echo "   下一步:写 runners/safety_enforcer.py + 重跑 smoke 3 · V02_STAGE=W3 bash smoke_test.sh"
 else

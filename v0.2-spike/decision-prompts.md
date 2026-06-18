@@ -18,12 +18,16 @@ description: v0.2 alpha 浏览器 agent 3 个 LLM 决策节点 · 输出 contrac
 > 4. **§ 4 顶层 audit_entry yaml block**(不需要特殊 tag · 由段标题 § 4 识别)→ audit schema · runner 用此 schema 写 llm_logs.jsonl
 > 5. inline 字段引用(如 `prev_page_accuracy`) → input/output 字段名
 >
-> **运行时 effective_config 注入合同**(r7 必修):
-> - `DecisionCaller.__init__(parameters_defaults_path)` 加载默认参数
-> - `runner` 启动对话产出 user_overrides → `DecisionCaller.set_effective_config(effective_config)`
-> - 每次 `eval_node` / `run_policy` 调用时 · DecisionCaller 内部把 `effective_config` 注入到 policy 闭包 · 替换硬编码值
+> **运行时 effective_config 注入合同**(r10 钉死 · 单一所有权 = runner):
+> - DecisionCaller **不自己加载** parameters-defaults · 构造时由 runner 注入:
+>   `DecisionCaller.from_md_sections("decision-prompts.md", effective_config=<runner 构建的 dict>)`
+> - runner 是 effective_config 唯一所有者(读 defaults + 合并 § 0.5 user_overrides + 写 run.json.effective_config)· 详见 SKILL.md § 0.5 + runners/README.md
+> - 无 `set_effective_config()` 二段装配 · 无 `parameters_defaults_path` 自加载 · 这两个旧接口已删
+> - 每次 `eval_node` / `run_policy` 调用时 · DecisionCaller 把 `self.effective_config` 注入 policy 闭包 · 替换硬编码值
 >
-> 故 `DecisionCaller.from_md_yaml_blocks()` 名字不准确 · **实际是 `from_md_sections()`** · 按段标题(§ 1.x / § 2.x / § 3.x)分发到对应节点。
+> 故 `DecisionCaller.from_md_yaml_blocks()` 名字不准确 · **实际是 `from_md_sections(path, effective_config)`** · 按段标题(§ 1.x / § 2.x / § 3.x)分发到对应节点。
+>
+> **数据形状合同**(r10 钉死 · 全 dict · 无 attribute access):`parsed` / `inputs` / `page_history` 元素 / `candidates` 元素 **一律 plain dict** · 全文 policy 用 `parsed["accuracy"]` / `inputs["page_number"]` / `p["accuracy"]` 下标访问 · **不用** `parsed.accuracy` 这种属性访问(与 runner/tests 的 dict 传参对齐)。
 
 > **r1 deep-review 反馈**:原版 🔴 大改 · 12 条硬伤
 > 1) 伪 YAML 占位符 · LLM 抄不准 · 2) `confidence` 不是已测概率,降级为 audit 字段 · 3) 节点 2 阈值 0.7 与权威 docs ≥80% 冲突 · 4) 单页判 boundary 不稳 · 5) 节点 3 漏真询盘风险 · 6) audit 不闭环
@@ -149,32 +153,33 @@ schema:
 
 ```python
 def decide(parsed, inputs):
+    # r10 · 全 dict 下标访问 · parsed / inputs / candidates 元素 / historical 元素 都是 plain dict
     # 条件 A:chosen 是有效候选
-    if parsed.chosen not in [1, 2, 3, 4, None]:
+    if parsed["chosen"] not in [1, 2, 3, 4, None]:
         return Failure(reason="invalid chosen")
 
     # 条件 B:applied_rules 至少 1 条 + evidence_snippets 至少 1 条 + r4 #4 hit validation
-    if not parsed.applied_rules or not parsed.evidence_snippets:
+    if not parsed["applied_rules"] or not parsed["evidence_snippets"]:
         return Failure(reason="missing evidence/rules")
     # r4 #4 · evidence 必须命中 inputs(防 LLM 编造)
-    candidates_text = " ".join(c.name + " " + c.recommend_reason for c in inputs.candidates)
-    if not any(snippet_keyword_in_text(snip, candidates_text) for snip in parsed.evidence_snippets):
+    candidates_text = " ".join(c["name"] + " " + c["recommend_reason"] for c in inputs["candidates"])
+    if not any(snippet_keyword_in_text(snip, candidates_text) for snip in parsed["evidence_snippets"]):
         return Failure(reason="evidence_snippets_no_input_hit")
 
     # 条件 C:why_not_top_alt 一致性(chosen=null 必须 audience_index=0)
-    if parsed.chosen is None and parsed.why_not_top_alt.audience_index != 0:
+    if parsed["chosen"] is None and parsed["why_not_top_alt"]["audience_index"] != 0:
         return Failure(reason="inconsistent why_not_top_alt")
 
     # 条件 D:chosen 对应的 audience_slug 在 historical_dead 中 → 拒绝(r2 #1 必修)
-    if parsed.chosen is not None:
-        chosen_candidate = next((c for c in inputs.candidates if c.audience_index == parsed.chosen), None)
+    if parsed["chosen"] is not None:
+        chosen_candidate = next((c for c in inputs["candidates"] if c["audience_index"] == parsed["chosen"]), None)
         if chosen_candidate is None:
             return Failure(reason="chosen index not in candidates")
-        dead_slugs = {h.audience_slug for h in inputs.historical_dead_audiences}
-        if chosen_candidate.audience_slug in dead_slugs:
+        dead_slugs = {h["audience_slug"] for h in inputs["historical_dead_audiences"]}
+        if chosen_candidate["audience_slug"] in dead_slugs:
             return Failure(reason="chosen audience_slug overlaps dead audiences")
 
-    return Success(audience_id=parsed.chosen)
+    return Success(audience_id=parsed["chosen"])
 ```
 
 **Confirm 闸 1**:无论 LLM 输出多"自信" · 都必须用户拍板才进入下一步(spec § 5.1)。
@@ -211,8 +216,9 @@ final_disposition:
     type: "BoundaryReached"
     payload:
       accuracy: 0.50          # 触发边界的当前页 accuracy · 必填
-      at_page: 60             # 最后准页(= page - 2)
-      save_companies: 600     # at_page × 10
+      at_page: 60             # 最后准页
+      # r10 钉死 · save_companies 不在此处算 · 由 runner 用 effective_config.save_companies_formula(at_page) 求值
+      #          policy 只负责定 at_page · 保存数量是 runner 职责(单一公式源)
       note: "two_consecutive_low_pages_confirm"   # r8 必修 · 加 note 到 schema
   Hopeless:
     type: "Hopeless"
@@ -300,7 +306,7 @@ cross_field_validation:
 > ```python
 > Continue(accuracy=current, note="...")
 > Hopeless(accuracy=current, cumulative_avg=avg, reason="...")
-> BoundaryReached(accuracy=current, at_page=page-2, save_companies=(page-2)*10, note="...")
+> BoundaryReached(accuracy=current, at_page=page-2, note="...")   # r10 · 不带 save_companies · 保存数由 runner 用 formula 求
 > ```
 
 ```python
@@ -309,9 +315,9 @@ def decide_per_page(parsed, inputs, page_history):
     page_history: list of {page: int, accuracy: float}  # 截至当前的所有页历史
     r2 #2-3 必修:boundary 计算 + hopeless 分支可达
     """
-    current = parsed.accuracy
-    page = inputs.page_number
-    prev = inputs.prev_page_accuracy   # = page_history[-2].accuracy if exist else None
+    current = parsed["accuracy"]          # r10 · 全 dict 下标访问 · 无 attribute access
+    page = inputs["page_number"]
+    prev = inputs["prev_page_accuracy"]   # = page_history[-2]["accuracy"] if exist else None
 
     # ⚠️ α.3 起从 effective_config 读 · 不再硬编码(parameters-defaults.md § 1)
     ACCURATE_HIGH = effective_config["boundary_high"]        # default 0.80
@@ -345,7 +351,7 @@ def decide_per_page(parsed, inputs, page_history):
         return BoundaryReached(
             accuracy=current,
             at_page=boundary_page,
-            save_companies=boundary_page * 10,
+            # r10 · 不带 save_companies · runner 用 effective_config.save_companies_formula(boundary_page) 求
             note="two_consecutive_low_pages_confirm"
         )
 
@@ -459,34 +465,34 @@ def decide_inquiry(parsed, inputs):
     INQUIRY_FLAG_THRESHOLD = effective_config["llm_node_3_inquiry_flag_threshold"]   # default 0.55
     NON_INQUIRY_AUTO_THRESHOLD = effective_config["llm_node_3_inquiry_auto_threshold"]   # 与 inquiry auto 同
 
-    p = parsed.candidate_tags
+    p = parsed["candidate_tags"]   # r10 · dict {tag: score} · 全下标访问
 
     # 条件 1:inquiry 候选超 0.85 → auto-apply
-    if p.inquiry >= INQUIRY_AUTO_THRESHOLD and parsed.tag == "inquiry":
+    if p["inquiry"] >= INQUIRY_AUTO_THRESHOLD and parsed["tag"] == "inquiry":
         return AutoApply(tag="inquiry")
 
     # 条件 2:inquiry 候选 0.55-0.85 之间 OR argmax 但低于 0.85 → 强制人工升级
     # ⚠️ 不静默沉到 neutral · 必须召人工
-    if p.inquiry >= INQUIRY_FLAG_THRESHOLD:
+    if p["inquiry"] >= INQUIRY_FLAG_THRESHOLD:
         return EscalateToHuman(
             reason="inquiry candidate elevated",
             pre_filled_tag="inquiry"   # 提示人工"AI 倾向 inquiry"
         )
 
     # 条件 3:非 inquiry 标签超 0.85 → auto-apply
-    if parsed.tag != "inquiry" and max(p[t] for t in ["ooo", "referral", "rejection", "neutral"]) >= NON_INQUIRY_AUTO_THRESHOLD:
-        return AutoApply(tag=parsed.tag)
+    if parsed["tag"] != "inquiry" and max(p[t] for t in ["ooo", "referral", "rejection", "neutral"]) >= NON_INQUIRY_AUTO_THRESHOLD:
+        return AutoApply(tag=parsed["tag"])
 
     # 条件 4(r2 #4 修紧):argmax gap > 0.4 仅在 top ≥ NON_INQUIRY_AUTO_THRESHOLD 时才 auto
     # 之前的"gap > 0.4 即 auto"过松 · 绕开 0.85 阈值 · 现在要求双重门
     sorted_p = sorted(p.values(), reverse=True)
-    if sorted_p[0] - sorted_p[1] > 0.4 and sorted_p[0] >= NON_INQUIRY_AUTO_THRESHOLD and parsed.tag != "inquiry":
-        return AutoApply(tag=parsed.tag, reason="high_gap_and_high_top")
+    if sorted_p[0] - sorted_p[1] > 0.4 and sorted_p[0] >= NON_INQUIRY_AUTO_THRESHOLD and parsed["tag"] != "inquiry":
+        return AutoApply(tag=parsed["tag"], reason="high_gap_and_high_top")
 
     # 兜底:不静默 · 召人工
     return EscalateToHuman(
         reason="low confidence / ambiguous",
-        pre_filled_tag=parsed.tag
+        pre_filled_tag=parsed["tag"]
     )
 ```
 
@@ -559,7 +565,10 @@ audit_entry:
 ## § 5 · Repair Retry Policy(全节点共用)
 
 ```python
-def call_with_repair(node_name, inputs, max_retries=1):
+def call_with_repair(node_name, inputs, max_retries=None):
+    # r10 · 从 effective_config 读 · 不再硬编码(parameters-defaults.md § 7 llm_max_retries · default 1)
+    if max_retries is None:
+        max_retries = effective_config["llm_max_retries"]
     raw = await codex_llm_call(node_name, inputs)
     parsed, errors = parse_and_validate(raw, schema)
     if not errors:

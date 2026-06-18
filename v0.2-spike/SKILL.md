@@ -94,7 +94,7 @@ description: 你在场监督 · AI 帮你在「来发信」网页里干两件事
 in_scope:
   - 段 1 客群推演(AI 数据库输入产品 → AI 推演 → 选客群)
   - 段 2 翻页判精度(逐页 LLM 看 → 找精度边界 → 动态保存范围)
-  - 联系人保存(单家 5-10 邮箱)
+  - 联系人保存(单家最多 emails_per_company 个邮箱 · default 5 · range 3-10)
   - 打标签(公式:语言-国家-产品/行业-供应链角色)
 
 out_of_scope:                       # 任何操作 = 立即 stop + alert
@@ -189,7 +189,7 @@ failure_diagnostics:                      # null if successful
    - 当前 < `boundary_low`(default 0.60) 且 上一页 ≥ `boundary_low` → 翻下一页确认(单页不判 boundary)
    - **双页连续 < `boundary_low` → boundary 确认**(此即"精度边界")
    - 总页数上限 = `effective_config.max_boundary_pages`(default 50 · 防失控)
-6. 保存范围 = `eval(effective_config.save_companies_formula, {boundary_page})` · default 公式 `boundary_page * 10` · cap = `effective_config.max_save_companies`(default 1000)· 邮箱/家 = `effective_config.emails_per_company`(default "5-10")
+6. 保存范围 = `eval(effective_config.save_companies_formula, {boundary_page})` · default 公式 `boundary_page * 10` · cap = `effective_config.max_save_companies`(default 1000)· 邮箱/家 = `effective_config.emails_per_company`(整数 · default 5 · range 3-10 · 实际有几个存几个不超此值)
 7. Confirm 闸 2:用户签发 one-time token(预算预演:估算总邮箱数 × 单价)· **审批模型唯一**:runner 在此处预签 token,把 `pre_signed_token` 直接透传给 safety-gates `safe_click(..., pre_signed_token=...)`,gates 层 `consume()` 不再触发第二次 `await_user_token()`(详见 safety-gates.md § 4.5)
 8. 执行保存 → 写回 run.json + summary.md + artifacts.json
 9. 完成 · 用户 review

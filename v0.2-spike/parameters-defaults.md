@@ -74,9 +74,10 @@ emails_per_company:
   default: 5
   range: [3, 10]
   type: integer
-  rationale: "Tony § 0 #9 单家公司保存邮箱数"
+  rationale: "Tony § 0 #9 单家公司保存邮箱数上限(整数 · 实际有几个存几个 · 不超此值)· 预算预演按此整数 × 公司数 × 单价估"
   override_via: conversation
-  used_in: "saving stage · 邮箱选择数量"
+  used_in: "saving stage · 邮箱选择数量 + Confirm 闸 2 预算预演"
+  note: "r10 钉死类型 = 整数 · 全链路(SKILL/runner/safety-gates 预算公式)都用此整数 · 不再出现 \"5-10\" 字符串"
 
 save_companies_formula:
   default: "boundary_page * 10"

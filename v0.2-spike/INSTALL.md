@@ -104,4 +104,4 @@ A · 兼容 · schema 在 SKILL.md § 3.1 定义 · 与客户端无关。
 A · alpha 阶段不行。Tony 必须在场 · 关键动作要 Y/N。等 promote 到 beta 后再开放半监督模式。
 
 **Q · 出错了我怎么停?**
-A · 任何时候直接 Ctrl-C / 关掉 Codex/Claude Code 窗口即可。在跑的 token 会自动过期(`token_expire_minutes` default 10 分钟)· 不会留死锁。
+A · 任何时候直接 Ctrl-C / 关掉 Codex/Claude Code 窗口即可。在跑的审批 token 会自动过期(`token_expire_minutes` default 5 分钟 · hard ceiling 10)。若你在中途暂停了一个 guarded 步骤,下次需要**手动 resume**(token 状态机的 resume 路径属 W3 实施层 · 当前 stub 阶段不保证自动续期)。
