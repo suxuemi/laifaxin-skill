@@ -1,83 +1,73 @@
-# ⚠️ Laifaxin Outreach v0.2-alpha · Supervised Browser Spike
+# Laifaxin Outreach v0.2-alpha · 浏览器陪跑
 
-> **alpha 阶段 · 高风险 · 用户必须在场监控 · 用户真账户 · 不保证 SLA · 勿生产用**
+> **一句话**:你打开 [web.laifaxin.com](https://web.laifaxin.com) 登录好,AI 帮你做 ① 输产品选客群 + ② 翻页判精度保对的联系人 —— 你坐旁边看,关键动作要你点 Y。
+>
+> 配 [Claude Code](https://claude.com/claude-code) 或 [Codex CLI](https://github.com/openai/codex) 都能跑 · 同一份 5 文件。
 
-这个分支(`spike/v0.2-alpha`)是 v0.1.0 SOP 包的**实验性升级方向** ——
-让 Codex CLI(配 `browser-use` / `computer-use` plugin)真的在浏览器里跑客户开发流程,
-而不是停在"生成提示词让用户手动操作"。
+## 适合谁
 
-## 是什么 / 不是什么
-
-| ✅ 是 | ❌ 不是 |
+| ✅ 你应该用 | ❌ 走 [v0.1 main 分支](https://github.com/suxuemi/laifaxin-skill) |
 |---|---|
-| 设计文档(SKILL / safety-gates / decision-prompts / runners stub / HOW-TO-START)| 可直接运行的 v0.1.0 软件包 |
-| Codex CLI 编排 + computer-use plugin 看屏幕(macOS a11y + screenshot)+ browser-use 辅助(URL/title 上下文)| 浏览器自动化 SaaS / 无人值守 24h agent |
-| **主路径不用 AI 评分 · 翻页判精度 + 动态保存范围**(Tony § 0 #8 #9)| AI 评分 / 自动激活 / 自动发邮件 |
-| Scope 严格限定:段 1 客群推演 + 段 2 翻页保存 | 邮件模板 / 智能跟进 / 邮件群发 / 回信处理(scope out) |
-| 必须用户在场监控 · token 闸防误操作 | 端到端无人值守 |
+| "在来发信网页里搜一批食品分销商 · 翻页判对不对 · 保对的" | "帮我写一封开发信 / 排 sequence / 处理回信" |
+| 你在场 + 你自己 [来发信](https://www.laifa.xin) 账户 + 接受半监督 | 想要无人值守的 24h 自动化 |
+| 想看 AI 怎么在真浏览器里替你干活 | 第一次用来发信 · 还在学 SOP |
 
-## 5 项入口硬铁律(违反任意 = 立即 stop · 详见 `v0.2-spike/SKILL.md` § 2)
+> ⚠️ **alpha · 高风险 · 用户必须在场 · 用户真账户 · 不保证 SLA · 勿生产用**
+
+## 2 分钟跑起来
+
+**Claude Code(自动加载)**
+```bash
+cp -r v0.2-spike ~/.claude/skills/laifaxin-outreach-v0.2
+# 重启 Claude Code · 然后说:
+# "在来发信网页里帮我搜一批食品分销商 · 翻页判精度 · 保对的联系人"
+```
+
+**Codex CLI(手动 @ 引用)**
+```
+我已登录 web.laifaxin.com · 跑 laifaxin-outreach-v0.2 spike
+@v0.2-spike/SKILL.md @v0.2-spike/parameters-defaults.md @v0.2-spike/safety-gates.md
+@v0.2-spike/decision-prompts.md @v0.2-spike/HOW-TO-START-SPIKE.md
+产品:______ · 客群方向:______
+```
+
+完整 install + FAQ → [v0.2-spike/INSTALL.md](v0.2-spike/INSTALL.md)
+
+## 5 项铁律(违反 = 立即 stop · 详见 [SKILL.md § 2](v0.2-spike/SKILL.md))
 
 1. 用户必须在场监控
-2. scope 越界 = 立即 stop + alert(进入 sequence / template / AI 评分 / 发送等 out_of_scope 模块)
-3. 永久 block 列表的按钮任何情况不点(发送 / 激活 / 删除 / 导出 / 黑名单 / 退订 等)
-4. Guarded 动作必须 one-time approval token(5 分钟有效 · 单次使用)
-5. 登录失效 / 验证码 / 反爬 / 权限弹窗 = pause + alert(不得自恢复)
+2. Scope 越界 = stop(进入 sequence / template / AI 评分 / 发送等 out_of_scope 模块)
+3. 永久 block 列表的按钮任何情况不点(发送 / 激活 / 删除 / 导出 / 黑名单 / 退订 / AI 评分)
+4. Guarded 动作必须 one-time approval token(default 10 分钟有效 · 单次使用)
+5. 登录失效 / 验证码 / 反爬 / 权限弹窗 = pause + alert(不自恢复)
 
-## 主流程(对齐 `v0.2-spike/decision-prompts.md` 最新 canonical)
-
-```
-1. 用户启动 → 输入产品 → 点 AI 推演
-2. LLM 节点 1 选客群 → Confirm 闸 1
-3. 翻页 sequential · 每翻一页调用 LLM 节点 2:
-   - 当前页 ≥ 0.80 → 翻下一页
-   - 0.60-0.80 中间 → 翻下一页(不停)
-   - 单页 < 0.60 → 翻下一页确认
-   - 双页连续 < 0.60 → boundary 确认 · 保存范围 = (boundary_page) × 10 公司
-4. Confirm 闸 2 + token → 保存 + 打标签(5-10 邮箱/家)
-5. 写回 run.json + summary.md + artifacts.json
-```
-
-## 启动需要
-
-- Codex CLI ≥ 0.140.0-alpha.2 + `browser@openai-bundled` + `browser-use@openai-bundled` + `computer-use@openai-bundled` 全 enabled
-- 来发信账户已登录(`https://web.laifaxin.com`)+ Chrome 不必前台,但用户 watching
-- 已读 v0.1 SOP 包(`main` 分支)
-- 已读本目录 `v0.2-spike/HOW-TO-START-SPIKE.md` 完整 runbook
-
-## v0.1 vs v0.2-alpha
-
-| 维度 | v0.1.0(main 分支)| v0.2-alpha(本分支)|
-|---|---|---|
-| 形态 | SOP 文档包(用户手动配置)| 浏览器 agent 设计(W3+ 实施)|
-| 风险 | 低 | 高(用户真账户)|
-| SLA | 不保证(SOP 性质)| 不保证(alpha)|
-| 适用 | 普通用户 | 内部 dogfood / Tony 自用 |
-| 安装 | `git clone -b main` | `git clone -b spike/v0.2-alpha` |
-| 触发优先级 | 大多数场景 | 仅用户明确说"在来发信网页里实际操作搜客 / 翻页 / 保存" |
-
-## 文件清单
+## 主流程
 
 ```
-v0.2-spike/
-├── SKILL.md                    ← Skill 入口 · 5 铁律 + trigger precedence + 主流程
-├── safety-gates.md             ← 三层语义白名单 + token 流(待 W3 落地)+ 失败矩阵
-├── decision-prompts.md         ← 3 LLM 节点 · output contract + repair retry + 统一 audit
-├── HOW-TO-START-SPIKE.md       ← 实战启动 runbook(预飞 + smoke test + 紧急停 + 回灌)
-└── runners/
-    └── README.md               ← prospect.py 伪 API(stub · W3 实施)
+1. 启动对话确认参数(boundary 阈值 / 保存公式 / token 时长 等 · 详见 parameters-defaults)
+2. 输产品 → AI 推演 → 4 客群卡片 → 用户拍板选一个
+3. 翻页 sequential · 每页 LLM 节点判精度
+   - ≥ boundary_high(default 0.80) → 继续
+   - < boundary_low(default 0.60) 连两页 → 停 · 锁 boundary_page
+4. 保存范围 = boundary_page × N 公司 × 5-10 邮箱(N 可调)
+5. 用户签 token → 真点保存 → 写 run.json + summary.md
 ```
 
-## 设计依据
+## Canonical 5 文件
 
-完整 spec(已归档):主仓 `specs/done/2026-06-17-laifa-browser-agent-v0.2.md`
-关键决策回顾:主仓 `wiki/history/2026-06-laifa-browser-agent-v0.2-design.md`
+| 文件 | 干嘛 |
+|---|---|
+| [v0.2-spike/SKILL.md](v0.2-spike/SKILL.md) | 入口 · 触发 + scope + 主流程 + run.json schema |
+| [v0.2-spike/parameters-defaults.md](v0.2-spike/parameters-defaults.md) | 所有可调参数 + default + range + frozen |
+| [v0.2-spike/safety-gates.md](v0.2-spike/safety-gates.md) | 三层白名单 + token store + safe_click |
+| [v0.2-spike/decision-prompts.md](v0.2-spike/decision-prompts.md) | 3 个 LLM 节点 prompt + schema + 修复重试 |
+| [v0.2-spike/HOW-TO-START-SPIKE.md](v0.2-spike/HOW-TO-START-SPIKE.md) | preflight + smoke + promote(alpha→beta) |
 
-经历:r1 🔴 大改 → v2 重写 → r2 🟡 → v3 重写 → r3 🟡 + Tony 10 项拍板 → r4 deep-review 逐文件(safety + decision + SKILL + HOW-TO-START 各 r1/r2 全部回灌)
+## 状态
 
-## 不要做
+- α.3.4(当前):5 文件互引一致 · runner stub-only · 等 W3 真接 computer-use
+- 待 promote 到 beta:见 [HOW-TO-START-SPIKE.md § 6.3](v0.2-spike/HOW-TO-START-SPIKE.md) 4 条硬条件(全部从 `effective_config` 读 · 不硬编码)
 
-- ❌ 不要直接照本分支文件实施 · 这是 design + stub · W3 才落地 runners/prospect.py
-- ❌ 不要在 main 分支用 v0.2 · 它们是两条 release channel
-- ❌ 不要把 spike runs 数据 push 到本仓(screenshots / llm_logs 已 gitignore)
-- ❌ 不要承诺 24h 无人值守 / 端到端 agent 任何对外表述
+## License
+
+MIT · 同 v0.1 main 分支

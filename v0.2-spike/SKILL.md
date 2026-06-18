@@ -1,15 +1,46 @@
 ---
 name: laifaxin-outreach-v0.2
-description: Supervised browser spike (alpha) — ONLY for when user explicitly asks to OPERATE the Laifaxin (来发信) web UI (https://web.laifaxin.com) via Codex CLI + computer-use plugin · Scope strictly limited to 段 1 (input product → AI 推演 → choose audience) + 段 2 (page-by-page accuracy judgment → save contacts with dynamic range) · Does NOT use AI rating, does NOT operate templates/sequences/sending/inbox, does NOT handle replies · For cold-email copywriting, sequence design, reply handling, or generic prospecting advice → DEFER to laifaxin-outreach v0.1 · User must be present (alpha · supervised) · Existing logged-in account, no canary
+description: 你在场监督 · AI 帮你在「来发信」网页里干两件事 —— ① 输产品 → 选客群 ② 翻页判精度 → 保存对的公司联系人 · 写信发信回信不碰(走 v0.1)· 适配 Claude Code 自动加载 + Codex 手动 @ 引用 · 触发词:"在来发信里帮我搜客 / 翻页判精度 / 保存联系人 / 接管登录的 web.laifaxin.com / 走 browser spike"
 ---
 
-# Laifaxin Outreach v0.2 · Supervised Browser Spike (alpha)
+# Laifaxin Outreach v0.2 · 浏览器陪跑 spike(alpha)
 
-> ⚠️ **alpha · 高风险 · 用户必须在场 · 用户真账户 · 不保证 SLA · 不是无人值守 agent**
+> **一句话**:你打开 [web.laifaxin.com](https://web.laifaxin.com) 登录好,本 skill 让 AI 帮你做 ① 输产品选客群 + ② 翻页 + 保对的联系人 —— 你全程坐旁边看 · 关键动作要你点 Y。
 >
-> **Canonical 来源(α.3 起的权威 · 5 文件)**:本目录 `SKILL.md` + `parameters-defaults.md`(α.3 新增 · 首读)+ `safety-gates.md` + `decision-prompts.md` + `HOW-TO-START-SPIKE.md`(5 文件互引一致)
-> **背景资料(已 freeze · 不作 canonical)**:`specs/done/2026-06-17-laifa-browser-agent-v0.2.md` 含旧公式(70% 单页 / boundary=61 / browser-use 引用 / AI 评分小样本)· 已被 r1-r5 演化覆盖 · **读者应以本目录 5 文件为准**
-> **执行 runners**:`runners/`(本目录 · W3 实施 · 当前 stub-only)
+> **2 分钟上手** → [INSTALL.md](INSTALL.md)(Claude Code 自动 / Codex 手动两种用法)
+>
+> ⚠️ **alpha · 高风险 · 用户必须在场 · 用户真账户 · 不保证 SLA · 不是无人值守 agent**
+
+## TL;DR · 这个 skill 适合谁
+
+| ✅ 你应该用 | ❌ 你不该用(走 v0.1) |
+|---|---|
+| "在来发信网页里帮我搜一批食品分销商 · 翻页判对不对 · 保对的" | "帮我写一封开发信 / 排 sequence / 处理回信" |
+| "接管我已登录的 web.laifaxin.com · 找完一批客户保进我的客户库" | "我还没用过来发信 · 帮我搞个 SOP" |
+| 你在场 + 你自己账户 + 接受半监督 | 想要无人值守的 24h 自动化 |
+
+> Canonical 5 文件:本 `SKILL.md` + [parameters-defaults.md](parameters-defaults.md) + [safety-gates.md](safety-gates.md) + [decision-prompts.md](decision-prompts.md) + [HOW-TO-START-SPIKE.md](HOW-TO-START-SPIKE.md) · 详见 [INSTALL.md](INSTALL.md)
+> 背景资料(已 freeze · 不作 canonical):`specs/done/2026-06-17-laifa-browser-agent-v0.2.md`(含已被 r1-r5 覆盖的旧公式)· 执行 runners:`runners/`(W3 实施 · 当前 stub-only)
+
+## § 0.0 · 客户端兼容(Claude Code + Codex CLI 双适配)
+
+本 skill 是**纯文档 + 纯 markdown**,任何能读 markdown 的 LLM agent 都能跑。已验证两套入口:
+
+- **Claude Code**:扔进 `~/.claude/skills/laifaxin-outreach-v0.2/` → 自动按 frontmatter `description` 触发 → 自动加载 5 canonical 文件
+- **Codex CLI**:用户在 prompt 里 `@SKILL.md @parameters-defaults.md @safety-gates.md @decision-prompts.md @HOW-TO-START-SPIKE.md` → Codex 读完按 § 0.5 启动对话 → 走主流程
+- **其他 agent**:粘 [INSTALL.md](INSTALL.md) 「通用 agent 启动指令」一段进 system prompt 即可
+
+**Codex 用户最短启动指令**(粘进 Codex 即可,不需要 frontmatter 加载机制):
+
+```
+我已经在 Chrome 登录了 web.laifaxin.com · 帮我用 laifaxin-outreach-v0.2 skill 跑 browser spike
+读以下 5 文件 · 按 SKILL.md § 0.5 启动对话先确认参数 · 然后按 § 4 主流程走:
+@skills-public/laifaxin-outreach-v0.2/SKILL.md
+@skills-public/laifaxin-outreach-v0.2/parameters-defaults.md
+@skills-public/laifaxin-outreach-v0.2/safety-gates.md
+@skills-public/laifaxin-outreach-v0.2/decision-prompts.md
+@skills-public/laifaxin-outreach-v0.2/HOW-TO-START-SPIKE.md
+```
 
 ## § 0 · Trigger Precedence(触发优先级 · 防抢 v0.1)
 
