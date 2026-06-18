@@ -18,7 +18,7 @@ tags: [install, skill, claude-code, codex-cli, laifaxin, v0.2-alpha]
 
 1. **Chrome 已登录** [web.laifaxin.com](https://web.laifaxin.com) · cookie 有效 · 不在登录页
 2. **账户里有点数**(本 skill 只 spike 段 1 + 段 2 · 保存联系人会消耗点数 · 估算后用户拍板)
-3. **你本人在场**:alpha 阶段强约束 · 关键动作(保存联系人 / 进入 guarded 步骤)需要你点 Y 才会执行
+3. **你本人在场**:alpha 阶段强约束 · 关键动作(保存弹窗里的"确认转化" guarded 步骤)需要你点 Y 签发 token 才会执行
 
 ---
 

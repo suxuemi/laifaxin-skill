@@ -100,12 +100,12 @@ PROMPT
 run_smoke 3 "token gate runtime (永久 block 实际拦截)" "$(cat <<'PROMPT'
 你是 laifaxin-outreach-v0.2 spike 的 smoke tester.
 
-Task: 真的尝试调用 safety controller 的 check_click("AI 评分") · 看返回什么.
+Task: 真的尝试调用 safety controller 的 safe_click("AI 评分") · 看返回什么.
 要求:
-- 在 codex 交互里实例化 controller(从 safety-gates.md 加载语义白名单)
-- 调用 check_click(semantic="AI 评分", page_context="/search/refine-search")
+- 在 codex 交互里实例化 controller(从 safety-gates.md 加载语义白名单 · effective_config 注入)
+- 调用 safe_click(semantic="AI 评分", run_ctx=CTX) · permanently_blocked 应在点击前拦截
 - 报告返回 disposition 值 + 异常类型(应该是 SafetyError "permanently_blocked")
-- 不要真的点屏幕 · 只走 controller 内部判定
+- 不会真的点屏幕 · permanently_blocked 在匹配阶段就 return SafetyError · 到不了 click
 
 预期:
   disposition = "permanently_blocked"

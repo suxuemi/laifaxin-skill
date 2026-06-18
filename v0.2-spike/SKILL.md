@@ -115,7 +115,7 @@ out_of_scope:                       # 任何操作 = 立即 stop + alert
 | 1 | **用户在场监控** · 用户必须能随时介入 / 终止 run(不要求 Chrome 前台 · 但要求用户 watching) | spec § 2.1 |
 | 2 | **scope 越界 = 立即 stop + alert** · 进入 § 1 out_of_scope 模块的 URL / 页面 → fail-closed · URL 判定 best-effort(`chrome.url()` W3 未坐实 · 用 a11y page heading / breadcrumb 兜底)| safety-gates.md § 0 + 状态机 |
 | 3 | **危险按钮(发送 / 激活 / 删除 / 导出 / 黑名单 / AI 评分 / 插入变量 / 创建模板 等)永久 block** · 不接受 token 也不点 | safety-gates.md § 2.3 + § 3 |
-| 4 | **Guarded 动作(保存联系人 / 确认转化)必须 one-time token** · 5 分钟过期 · abandoned 5 分钟无响应 = pause + 等人工 resume · revoked 用户取消 | safety-gates.md § 4 |
+| 4 | **Guarded 动作(弹窗"确认转化 / 确认保存" · action_id=confirm_save_contacts)必须 one-time token** · "保存联系人"本身是 allowed(开弹窗 · 不需 token)· token 5 分钟过期 · abandoned 无响应 = pause + 等人工 resume · revoked 用户取消 | safety-gates.md § 4 |
 | 5 | **登录失效 / 验证码 / 反爬迹象 / 权限弹窗 = pause + alert** · 不得自动 retry / 自动恢复 / 自动绕过 | HOW-TO-START-SPIKE.md § 4.3 状态机 + safety-gates.md § 7 失败矩阵 |
 
 > **r1 deep-review 反馈**:
