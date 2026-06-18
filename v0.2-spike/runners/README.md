@@ -154,14 +154,18 @@ class V02SpikeRunner:
         save_count = min(save_count, self.effective_config["max_save_companies"])   # default 1000
         emails_per_company = self.effective_config["emails_per_company"]            # 整数 · default 5 · range 3-10
 
-        # Confirm 闸 2 · r10 钉死 · 审批单轨:runner 预签 token → 透传给 safe_click(只 consume · gates 不二次 await)
+        # ① "保存联系人" 是 allowed 按钮(safety-gates § 2.1)· 普通点击 · 开保存弹窗 · 不需 token
+        await self.safety.safe_click(semantic="保存联系人", run_ctx=self.run_ctx)
+
+        # ② Confirm 闸 2 · r10 钉死 · 审批单轨:真正 guarded 的是弹窗里的"确认转化"(action_id=confirm_save_contacts)
+        #    runner 预签 token(action_id 必须 == confirm_save_contacts)→ 透传给 safe_click → gates 只 consume
         pre_signed_token = await self.request_user_token(
-            action="保存联系人",
-            params={"count": save_count, "emails_per_company": emails_per_company},   # 预算预演按 emails 上界估
+            action_id="confirm_save_contacts",                                       # 对齐 safety-gates § 2.2 guarded_actions
+            params={"count": save_count, "emails_per_company": emails_per_company},  # 预算预演:count × emails × 单价
         )
-        # 真实保存动作走 safe_click 唯一审批链 · pre_signed_token 透传 · gates 校验 action_id+payload+sig 后只 consume
+        # 弹窗确认键走唯一审批链 · gates 校验 action_id+payload+sig 后只 consume · 缺 token = fail-closed
         await self.safety.safe_click(
-            semantic="保存联系人",
+            semantic="确认转化",                                                      # guarded 真实按钮文案
             run_ctx=self.run_ctx,
             pre_signed_token=pre_signed_token,
         )
@@ -188,38 +192,53 @@ if __name__ == "__main__":
 ### `tests/test_safety_enforcer.py`
 
 ```python
-def test_blocked_action_raises():
-    enforcer = SafetyEnforcer.from_md_sections("safety-gates.md")
-    with pytest.raises(SafetyError):
-        enforcer.check_click(semantic="发送")   # 永久 block
+# r10 · effective_config 一处构建 · 注入所有消费者(测试里 mock 一份 · 与 test_decision_caller 同源)
+EFFECTIVE_CONFIG = build_effective_config(load_parameters_defaults("parameters-defaults.md"), user_overrides={})
 
-def test_guarded_action_requires_token():
-    enforcer = SafetyEnforcer.from_md_sections("safety-gates.md")
-    with pytest.raises(SafetyError, match="No token"):
-        enforcer.check_click(semantic="确认转化", token=None)
+def test_blocked_action_raises():
+    enforcer = SafetyEnforcer.from_md_sections("safety-gates.md", effective_config=EFFECTIVE_CONFIG)
+    with pytest.raises(SafetyError):
+        await enforcer.safe_click(semantic="发送", run_ctx=CTX)   # 永久 block · 任何 token 都不放行
+
+def test_guarded_action_without_token_fail_closed():
+    # r10 审批单轨:guarded 动作缺 pre_signed_token = fail-closed(gates 绝不自签)
+    enforcer = SafetyEnforcer.from_md_sections("safety-gates.md", effective_config=EFFECTIVE_CONFIG)
+    with pytest.raises(SafetyError, match="requires pre_signed_token"):
+        await enforcer.safe_click(semantic="确认转化", run_ctx=CTX, pre_signed_token=None)
+
+def test_guarded_action_with_pre_signed_token_consumes():
+    # r10 · guarded = 弹窗"确认转化"(action_id=confirm_save_contacts)· 带 runner 预签 token → gates 只 consume
+    enforcer = SafetyEnforcer.from_md_sections("safety-gates.md", effective_config=EFFECTIVE_CONFIG)
+    token = make_valid_token(action_id="confirm_save_contacts")   # runner 预签 mock
+    await enforcer.safe_click(semantic="确认转化", run_ctx=CTX, pre_signed_token=token)   # no exception
 
 def test_allowed_action_passes():
-    enforcer = SafetyEnforcer.from_md_sections("safety-gates.md")
-    enforcer.check_click(semantic="搜索")   # no exception
+    # "保存联系人" 与 "搜索" 都是 allowed(§ 2.1)· 普通点击 · 无需 token
+    enforcer = SafetyEnforcer.from_md_sections("safety-gates.md", effective_config=EFFECTIVE_CONFIG)
+    await enforcer.safe_click(semantic="搜索", run_ctx=CTX)         # no exception
+    await enforcer.safe_click(semantic="保存联系人", run_ctx=CTX)   # allowed · 开弹窗 · 无需 token
 ```
 
 ### `tests/test_decision_caller.py`
 
 ```python
+# r10 钉死 · effective_config 一处构建 · 注入 DecisionCaller · 无 set_effective_config 二段装配
+EFFECTIVE_CONFIG = build_effective_config(load_parameters_defaults("parameters-defaults.md"), user_overrides={})
+
 def test_llm_node_1_returns_one_audience():
-    # contract 对齐 decision-prompts.md § 1.3 新 schema
-    caller = DecisionCaller.from_md_sections("decision-prompts.md")
+    # contract 对齐 decision-prompts.md § 1.3 新 schema · r10 result 全 dict 下标访问
+    caller = DecisionCaller.from_md_sections("decision-prompts.md", effective_config=EFFECTIVE_CONFIG)
     result = caller.call("choose_audience", inputs={...})
-    assert result.chosen in [1, 2, 3, 4, None]
-    assert len(result.evidence_snippets) >= 1
-    assert len(result.applied_rules) >= 1
-    assert result.why_not_top_alt.audience_index in [0, 1, 2, 3, 4]
+    assert result["chosen"] in [1, 2, 3, 4, None]
+    assert len(result["evidence_snippets"]) >= 1
+    assert len(result["applied_rules"]) >= 1
+    assert result["why_not_top_alt"]["audience_index"] in [0, 1, 2, 3, 4]
     # ⚠️ 不再 assert confidence / reasoning · r1/r2 已降级为 audit 字段(不参与决策门)
 
 def test_llm_node_2_boundary_detection():
     # r8 必修 · 分两步:eval_node 拿 accuracy → append history → run_policy
-    caller = DecisionCaller.from_md_sections("decision-prompts.md")
-    caller.set_effective_config({...})  # 从 parameters-defaults 加载 + user overrides
+    # r10 · effective_config 注入构造 · 不再 set_effective_config
+    caller = DecisionCaller.from_md_sections("decision-prompts.md", effective_config=EFFECTIVE_CONFIG)
     rows_high_match = [{"description": "We import LED outdoor lighting from China"} for _ in range(10)]
 
     parse = caller.eval_node("per_page_accuracy", inputs={"rows": rows_high_match, ...}, effective_config=caller.effective_config)
@@ -236,8 +255,7 @@ def test_llm_node_2_boundary_detection():
 
 def test_llm_node_2_two_page_boundary_calculation():
     # r2 #2 必修 · 双页连续 < 0.6 · boundary_page = page - 2(最后准页)
-    caller = DecisionCaller.from_md_sections("decision-prompts.md")
-    caller.set_effective_config({...})
+    caller = DecisionCaller.from_md_sections("decision-prompts.md", effective_config=EFFECTIVE_CONFIG)
     # 模拟第 62 页 · 当前 0.5 / 上一页(第 61) 0.5
     page_history = [{"page": p, "accuracy": 0.85} for p in range(1, 61)] + \
                    [{"page": 61, "accuracy": 0.5}, {"page": 62, "accuracy": 0.5}]
@@ -252,8 +270,15 @@ def test_llm_node_2_two_page_boundary_calculation():
     )
     assert result.final_disposition.type == "BoundaryReached"
     assert result.final_disposition.payload["at_page"] == 60
-    assert result.final_disposition.payload["save_companies"] == 600
+    # r10 · policy 不再带 save_companies · 保存数量由 runner 用 effective_config.save_companies_formula(at_page) 求
+    assert "save_companies" not in result.final_disposition.payload
     assert result.final_disposition.payload["note"] == "two_consecutive_low_pages_confirm"
+
+def test_save_count_from_formula():
+    # r10 · 保存数量唯一来源 = runner 用 effective_config 公式求值(不读 policy payload)
+    save_count = safe_eval_formula(EFFECTIVE_CONFIG["save_companies_formula"], {"boundary_page": 60})
+    save_count = min(save_count, EFFECTIVE_CONFIG["max_save_companies"])
+    assert save_count == 600   # default 公式 boundary_page * 10 · cap 1000
 ```
 
 ## W3 启动前需补全

@@ -76,10 +76,10 @@ description: 你在场监督 · AI 帮你在「来发信」网页里干两件事
 7. 写入 run.json.user_overrides · 整个 run 用 effective config
 ```
 
-**effective_config 单一所有权(α.3.3 钉死 · r9 闭环)**:
+**effective_config 单一所有权(α.3.5 钉死 · r11 跨文档收口)**:
 - **runner 是唯一所有者**:`Runner.__init__()` 读 parameters-defaults → 合并 user_overrides → 生成 `self.effective_config` → 写 `run.json.effective_config`
-- DecisionCaller / safety-gates / promote 脚本等 **所有消费者都只读 `run.json.effective_config`**,不再自己加载 defaults
-- `DecisionCaller.__init__()` 接收 `effective_config: dict` 参数(runner 注入)· 不再读 markdown
+- DecisionCaller / safety-gates / promote 脚本等 **所有 config 消费者都只读 runner 注入的 `effective_config`**,不再自己加载 parameters-defaults
+- `DecisionCaller.from_md_sections(path, effective_config=<runner 注入>)`:**仍读 `decision-prompts.md`** markdown(取 prompt 文本 / schema / policy 这些"代码+数据"内容)· **但不读 `parameters-defaults.md`**(参数值由 runner 注入)· 无 `set_effective_config()` 二段装配
 
 **强约束**(参 `parameters-defaults.md` § 5):
 - `permanently_blocked_actions` / `scope_out_modules` = **frozen** · 用户不可改
@@ -190,8 +190,10 @@ failure_diagnostics:                      # null if successful
    - **双页连续 < `boundary_low` → boundary 确认**(此即"精度边界")
    - 总页数上限 = `effective_config.max_boundary_pages`(default 50 · 防失控)
 6. 保存范围 = `eval(effective_config.save_companies_formula, {boundary_page})` · default 公式 `boundary_page * 10` · cap = `effective_config.max_save_companies`(default 1000)· 邮箱/家 = `effective_config.emails_per_company`(整数 · default 5 · range 3-10 · 实际有几个存几个不超此值)
-7. Confirm 闸 2:用户签发 one-time token(预算预演:估算总邮箱数 × 单价)· **审批模型唯一**:runner 在此处预签 token,把 `pre_signed_token` 直接透传给 safety-gates `safe_click(..., pre_signed_token=...)`,gates 层 `consume()` 不再触发第二次 `await_user_token()`(详见 safety-gates.md § 4.5)
-8. 执行保存 → 写回 run.json + summary.md + artifacts.json
+7. 保存动作两步(对齐 safety-gates.md § 2):
+   - ① `safe_click("保存联系人")` — **allowed**(普通点击 · 开保存弹窗 · 不需 token)
+   - ② Confirm 闸 2:用户签发 one-time token(action_id = `confirm_save_contacts` · 预算预演:count × emails_per_company × 单价)· **审批模型唯一**:runner 预签 token 透传给 `safe_click("确认转化", pre_signed_token=...)`,gates 校验 action_id+payload+sig 后**只 consume**,**绝不**二次 `await_user_token()`;guarded 缺 token = fail-closed(详见 safety-gates.md § 4)
+8. 写回 run.json + summary.md + artifacts.json
 9. 完成 · 用户 review
 ```
 

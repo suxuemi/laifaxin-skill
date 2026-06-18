@@ -566,37 +566,43 @@ audit_entry:
 
 ```python
 def call_with_repair(node_name, inputs, max_retries=None):
-    # r10 · 从 effective_config 读 · 不再硬编码(parameters-defaults.md § 7 llm_max_retries · default 1)
+    # r10 真闭环 · 从 effective_config 读 · 真按 max_retries 循环(0 = 不修直接 fail · >1 = 多轮修)
+    # parameters-defaults.md § 7 llm_max_retries · default 1 · range [0, 3]
     if max_retries is None:
         max_retries = effective_config["llm_max_retries"]
+
     raw = await codex_llm_call(node_name, inputs)
     parsed, errors = parse_and_validate(raw, schema)
     if not errors:
         return parsed, raw, retry_count=0
 
-    # repair retry · r5 必修:完整重复 strict rules
-    repair_prompt = f"""
-    Previous output failed validation:
-    {format_errors(errors)}
+    # repair retry 循环 · 最多 max_retries 次(max_retries=0 → 跳过循环 → 直接 fail-closed)
+    history = [raw]
+    for attempt in range(1, max_retries + 1):
+        # r5 必修:每次都完整重复 strict rules
+        repair_prompt = f"""
+        Previous output failed validation:
+        {format_errors(errors)}
 
-    OUTPUT RULES(STRICT · REPEAT FULL · MUST FOLLOW):
-    - Return raw YAML.
-    - NO code fences (no ```).
-    - NO comments anywhere (no #).
-    - NO placeholder syntax like <...>.
-    - NO explanation paragraphs.
-    - Output exactly ONE YAML document matching the schema.
-    - Match schema EXACTLY (no extra keys, no missing required keys).
+        OUTPUT RULES(STRICT · REPEAT FULL · MUST FOLLOW):
+        - Return raw YAML.
+        - NO code fences (no ```).
+        - NO comments anywhere (no #).
+        - NO placeholder syntax like <...>.
+        - NO explanation paragraphs.
+        - Output exactly ONE YAML document matching the schema.
+        - Match schema EXACTLY (no extra keys, no missing required keys).
 
-    Return ONLY the corrected YAML now:
-    """
-    raw2 = await codex_llm_call_with_history([raw, repair_prompt])
-    parsed2, errors2 = parse_and_validate(raw2, schema)
-    if not errors2:
-        return parsed2, raw2, retry_count=1
+        Return ONLY the corrected YAML now:
+        """
+        raw = await codex_llm_call_with_history(history + [repair_prompt])
+        history.append(raw)
+        parsed, errors = parse_and_validate(raw, schema)
+        if not errors:
+            return parsed, raw, retry_count=attempt
 
-    # fail-closed
-    raise FailClosed(node=node_name, errors=errors2, retry_count=1)
+    # 用尽 max_retries 仍失败 → fail-closed
+    raise FailClosed(node=node_name, errors=errors, retry_count=max_retries)
 ```
 
 **Fail-closed 行为**:
