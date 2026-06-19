@@ -15,10 +15,13 @@ description: v0.2 alpha 全部可调参数 default schema · 用户启动 skill 
 > 1. **default 写在本文** · 用户改只影响**本次 run** · 不动 markdown
 > 2. **每次 run 必须由 Codex 启动对话**列出 defaults · 问"要改吗"(详见 SKILL.md § 0.5)
 > 3. **运行时配置** 写入 `run.json.effective_config`(整 run 用)+ `run.json.user_overrides`(audit 用户改了什么)
-> 4. **三类参数**:
+> 4. **参数类别**(以每个参数自己的 `override_via` 字段为准 · 下面是归纳):
 >    - `override_via: conversation` + `range` — 用户可改 · 范围内接受
->    - `override_via: conversation` + `hard_ceiling` — 用户可改 · 但有不可越上限
->    - `override_via: never` + `type: frozen` — 用户不可改(`permanently_blocked` / `scope_out` / `llm_model`)
+>    - `override_via: conversation` + `hard_ceiling` — 用户可改 · 但有不可越上限(仅 `token_expire_minutes` / `token_abandoned_minutes`)
+>    - `override_via: never` — 用户不可改 · 两种成因:
+>        · **frozen**(`type: frozen`):`llm_model` · `permanently_blocked` / `scope_out`(policy 清单 · 不进 effective_config)
+>        · **暂未接线**(`status: not_wired_until_w3`):`max_run_duration_minutes` / `max_runs_per_day`(无消费者 · W3 前不开放)· 节点 3 参数(scope-out)
+>    - ⚠️ `override_via: never` **不等于** `type: frozen`:存在"非 frozen 但 never"(max_run_* / node3)· 判定一律读参数自身 `override_via`
 > 5. **不写新 DSL** · 用户自然语言改 · Codex LLM 解析成结构化 override
 
 ## § 1 · 决策阈值类(decision-prompts.md 引用)
@@ -151,7 +154,9 @@ label_format:
     - "{lang}-{country}-{product}/{industry}-{role}"   # 含 industry(03-save 选用形)
 ```
 
-## § 5 · 安全类(strong constraints · 用户可放宽 · 不可越 hard ceiling)
+## § 5 · 安全类(混合 · 逐参数看 override_via)
+
+> token_expire/abandoned = hard_ceiling 可放宽 · max_run_* = override_via:never(无消费者 · 不开放)· permanently_blocked/scope_out = frozen policy 清单 · llm_model = frozen
 
 ```yaml
 token_expire_minutes:
