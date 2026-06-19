@@ -271,8 +271,9 @@ llm_max_retries:
 1. Codex 读本文 · 列出参数(detail 轮 F29 · 分两组展示 · 避免误导)
    - active_this_run(本次 run 真生效 · 必问):boundary_high/low · hopeless_min_pages/window · emails_per_company
      · save_companies_formula · save_task_timeout_s · max_save_companies · max_boundary_pages · token_expire/abandoned · llm_max_retries
+     · label_format(保存弹窗"公司标签/联系人标签"用 · saving.tags_applied · 本次 run 生效)
    - inactive / post-run(本次主流程不生效 · 默认折叠 · 用户主动问才列):
-     · promote_*（仅周度 promote 汇总用)· v01_baseline_minutes · label_format（W3 才落 UI)
+     · promote_*（仅周度 promote 汇总用)· v01_baseline_minutes
    - 不列(override_via: never):llm_model · node3 · max_run_*（无消费者)· permanently_blocked/scope_out（policy 清单)
 2. Codex 问用户:"默认参数如上(active 组)· 这次跑要改哪些?(说'默认'直接跑)"
 3. 用户自然语言改:

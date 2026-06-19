@@ -76,9 +76,10 @@ description: 你在场监督 · AI 帮你在「来发信」网页里实际操作
 7. 写入 run.json.user_overrides · 整个 run 用 effective config
 ```
 
-**effective_config 单一所有权(α.3.5 钉死 · r11 跨文档收口)**:
-- **runner 是唯一所有者**:`Runner.__init__()` 读 parameters-defaults → 合并 user_overrides → 生成 `self.effective_config` → 写 `run.json.effective_config`
-- DecisionCaller / safety-gates / promote 脚本等 **所有 config 消费者都只读 runner 注入的 `effective_config`**,不再自己加载 parameters-defaults
+**effective_config 单一所有权(α.4 钉死 · 构建在 main · runner 持有)**:
+- **构建职责在 `main`**(需与用户交互):`main` 读 parameters-defaults → `run_startup_dialog()` 产 user_overrides → `build_effective_config(defaults, overrides)`(内部硬校验派生约束 · 失败不启动)→ 把成品 dict 注入 `V02SpikeRunner(effective_config=...)`
+- **runner 是唯一持有/写入者**:`Runner.__init__(effective_config)` 接收已校验 dict → 写 `run.json.effective_config` → 注入下游消费者
+- DecisionCaller / safety-gates / promote 脚本等 **所有 config 消费者都只读 runner 注入的 `effective_config`**,不再自己加载 parameters-defaults · 也不在 `__init__` 里现造(避免未定义 user_overrides)
 - `DecisionCaller.from_md_sections(path, effective_config=<runner 注入>)`:**仍读 `decision-prompts.md`** markdown(取 prompt 文本 / schema / policy 这些"代码+数据"内容)· **但不读 `parameters-defaults.md`**(参数值由 runner 注入)· 无 `set_effective_config()` 二段装配
 
 **强约束**(参 `parameters-defaults.md` § 5):
@@ -219,12 +220,17 @@ failure_diagnostics:                      # null if successful · 任一阶段 f
 
 ## § 6 · 触发后必须先读的文件(顺序)
 
-LLM agent 触发本 SKILL 后,**按顺序读**:
+**运行本 skill(alpha · Codex/Claude 操作浏览器)读 5 canonical**(行为完全由这 5 份定义 · 与 § 0.0 一致):
 
-1. **`parameters-defaults.md`(本目录)— 启动对话需要(§ 0.5)· α.3 起首读**
-2. `safety-gates.md`(本目录)— scope + 白名单 + token + 失败矩阵
-3. `decision-prompts.md`(本目录)— 3 LLM 节点 prompt + schema + decision policy
-4. `runners/README.md`(本目录)— runner 接口(W3 实施 · 当前 stub)
+1. **`SKILL.md`(本文)** — 入口 + 触发 + scope + 主流程 + run.json schema
+2. **`parameters-defaults.md`** — 启动对话需要(§ 0.5)· 参数 default/range/frozen
+3. `safety-gates.md` — scope + 白名单 + token + 失败矩阵
+4. `decision-prompts.md` — 3 LLM 节点 prompt + schema + decision policy
+5. `HOW-TO-START-SPIKE.md` — preflight + smoke + promote(启动/验收用)
+
+> **`runners/README.md` 不是第 6 个 canonical**,是 **W3 实施参考(stub · 把上面 5 份的契约翻成 runner 伪代码 + 测试期望 + 待补清单)**。
+> 只有当你要**写真 runner 代码(prospect.py / safety_enforcer.py / decision_caller.py)** 时才读它 · 日常运行不需要 · 它与 5 canonical 一致(不引入新规则)。
+> `INSTALL.md` 是安装/上手指南(给人读)· 也非 canonical。
 5. `HOW-TO-START-SPIKE.md`(本目录)— 启动预飞 + 紧急停 + 反馈
 
 ## § 7 · 关联

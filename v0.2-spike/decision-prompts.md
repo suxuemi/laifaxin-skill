@@ -225,7 +225,7 @@ final_disposition:
     type: "BoundaryReached"
     payload:
       accuracy: 0.50          # 触发边界的当前页 accuracy · 必填
-      at_page: 60             # 最后准页
+      at_page: 50             # = last_high_page(最后一个 ≥ boundary_high 的页 · 中间区不计)· detail 轮
       # r10 钉死 · save_companies 不在此处算 · 由 runner 用 effective_config.save_companies_formula(at_page) 求值
       #          policy 只负责定 at_page · 保存数量是 runner 职责(单一公式源)
       note: "two_consecutive_low_pages_confirm"   # r8 必修 · 加 note 到 schema
@@ -323,7 +323,7 @@ cross_field_validation:
 > ```python
 > Continue(accuracy=current, note="...")
 > Hopeless(accuracy=current, cumulative_avg=avg, reason="...")
-> BoundaryReached(accuracy=current, at_page=page-2, note="...")   # r10 · 不带 save_companies · 保存数由 runner 用 formula 求
+> BoundaryReached(accuracy=current, at_page=last_high_page, note="...")   # detail 轮 · at_page=最后高精页 · 不带 save_companies(runner 用 formula 求)
 > ```
 
 ```python

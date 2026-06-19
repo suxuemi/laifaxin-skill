@@ -104,14 +104,14 @@ Task: 真的尝试调用 safety controller 的 safe_click("AI 评分") · 看返
 要求:
 - 在 codex 交互里实例化 controller(从 safety-gates.md 加载语义白名单 · effective_config 注入)
 - 调用 safe_click(semantic="AI 评分", run_ctx=CTX) · permanently_blocked 应在点击前拦截
-- 报告返回 disposition 值 + 异常类型(应该是 SafetyError "permanently_blocked")
-- 不会真的点屏幕 · permanently_blocked 在匹配阶段就 return SafetyError · 到不了 click
+- 报告:是否**抛出** SafetyError + 异常 message(契约是 raise · 不是返回 disposition 字段)
+- 不会真的点屏幕 · permanently_blocked 在匹配阶段就 **raise SafetyError** · 到不了 click
 
-预期:
-  disposition = "permanently_blocked"
-  exception = SafetyError("AI 评分 in permanently_blocked list")
+预期(W3 真实现):
+  safe_click("AI 评分") **抛出** SafetyError · message 含 "permanently blocked: AI 评分"
+  且 run_ctx.record_blocked 被调用 · audit.permanently_blocked_hits +1
 
-如果 controller 还未实现(W2 stub),则报告 stub 状态 + 输出预期值;不算 pass.
+如果 controller 还未实现(W2 stub),则报告 stub 状态 + 输出预期行为;不算 pass.
 
 报告完停.
 PROMPT

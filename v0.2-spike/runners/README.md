@@ -194,6 +194,12 @@ class V02SpikeRunner:
         modal_n = await self.read_save_modal_count()
         assert modal_n == save_count, f"弹窗保存数 {modal_n} ≠ 审批数 {save_count} · fail-closed"
 
+        # detail 轮(N6)· 打标签:弹窗"公司标签/联系人标签"填 label_format 渲染值(SKILL §1 in_scope · saving.tags_applied)
+        #   label_format 用 effective_config(本次 run 生效)· 渲染 {lang}-{country}-{product}-{role}
+        tags_applied = render_label(self.effective_config["label_format"],
+                                    audience=chosen_audience_id, product=self.product)
+        await self.set_save_modal_tags(tags_applied)   # 填入弹窗标签字段 · 仍是 allowed 编辑 · 不需 token
+
         # ② Confirm 闸 2 · 审批单轨:guarded = 弹窗"确认转化"(action_id=confirm_save_contacts)
         #   预算预演保守上界 = save_count × emails_per_company × 2(全有效价 · 见 safety-gates § 2.2)
         pre_signed_token = await self.request_user_token(
@@ -206,18 +212,18 @@ class V02SpikeRunner:
 
         # detail 轮(F21)· 保存是异步任务 · 点确认 ≠ 保存完成 · 轮询任务终态再判 success
         task_id = await self.read_save_task_id()
-        final_state = await self.poll_save_task(task_id, timeout_s=self.effective_config.get("save_task_timeout_s", 120))
+        final_state = await self.poll_save_task(task_id, timeout_s=self.effective_config["save_task_timeout_s"])   # required_key · 无 fallback
         if final_state != "done":
             # 拿不到终态 = 不能记 success · 记 partial/pending 让用户人工核对
             await self.audit.finalize(result="partial", chosen_audience=chosen,
                 boundary_page=boundary_page, saved_count=save_count,
-                saving={"task_id": task_id, "task_state": final_state})
+                saving={"task_id": task_id, "task_state": final_state, "tags_applied": tags_applied})
             return await self.pause_and_alert(f"保存任务未达终态({final_state})· 请人工核对")
 
         # 7. 写回 audit · 只有任务 done 才记 success
         await self.audit.finalize(result="success", chosen_audience=chosen,
             boundary_page=boundary_page, saved_count=save_count,
-            saving={"task_id": task_id, "task_state": "done"})
+            saving={"task_id": task_id, "task_state": "done", "tags_applied": tags_applied})
 
 
 # detail 轮(F17)· 分支退出 contract(原来只有调用点 · 无定义):
@@ -375,7 +381,7 @@ def test_hopeless_requires_min_pages():
 
 def test_save_count_from_formula():
     # r10 · 保存数量唯一来源 = runner 用 effective_config 公式求值(不读 policy payload)
-    save_count = safe_eval_formula(EFFECTIVE_CONFIG["save_companies_formula"], {"boundary_page": 60})
+    save_count = safe_arith_eval(EFFECTIVE_CONFIG["save_companies_formula"], allowed_names={"boundary_page": 60}, allowed_funcs={"min": min, "max": max})
     save_count = min(save_count, EFFECTIVE_CONFIG["max_save_companies"])
     assert save_count == 600   # default 公式 boundary_page * 10 · cap 1000
 ```
@@ -395,6 +401,7 @@ def test_save_count_from_formula():
 - [ ] **分支 contract**(detail 轮 F17)· `handle_repick(reason)` / `handle_fail_closed(d)` / `pause_and_alert(msg)` 落 audit + result 枚举
 - [ ] **`build_effective_config(defaults, user_overrides)`**(detail 轮 F14)· 合并 + **硬校验派生约束**(boundary_low<high-0.10 / hopeless_min<=window / flag<auto / token<=ceiling)· 任一违约 raise · 不生成 config · 不启动
 - [ ] **`run_startup_dialog(defaults)`**(detail 轮 F14)· SKILL §0.5 启动对话 · 产 user_overrides(active 组必问 · inactive 折叠)
+- [ ] **`render_label(label_format, audience, product)`** + **`set_save_modal_tags(tags)`**(detail 轮 N6)· 渲染 label_format → 填保存弹窗"公司/联系人标签" → saving.tags_applied
 
 ## 关联
 
