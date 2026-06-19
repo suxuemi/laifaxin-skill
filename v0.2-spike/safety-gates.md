@@ -111,7 +111,7 @@ guarded_actions:
       #              用 runner 已知的 save_count(= 公式求值结果)· 与签 token 的 payload 同源
       selected_count_source:
         type: runner_known
-        value: save_count                         # = eval(save_companies_formula, boundary_page)
+        value: save_count                         # = safe_arith_eval(save_companies_formula, {boundary_page}) post-cap(不用裸 eval · 见 runner)
       # detail 轮修 · 真实单价非 1.0 · 按 docs/zhinan/customer-website-search L134:
       #   有效邮箱 2 点 / 未知邮箱 1 点 / 无效邮箱 0 点(不扣)
       unit_price_rule:
