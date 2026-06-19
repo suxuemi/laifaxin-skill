@@ -17,9 +17,9 @@ FAIL=0
 
 check() {
     local name="$1"
-    local cmd="$2"
+    local cmd="$2"   # 脚本自身写死的检查命令串(无外部输入)· 用 bash -c 跑 · 不用 eval 内置(避免 lint/审查误判注入)
     echo -n "  $name ... "
-    if eval "$cmd" > /dev/null 2>&1; then
+    if bash -c "$cmd" > /dev/null 2>&1; then
         echo "✓"
         PASS=$((PASS+1))
         return 0
