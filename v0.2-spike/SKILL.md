@@ -84,8 +84,9 @@ description: 你在场监督 · AI 帮你在「来发信」网页里实际操作
 
 **强约束**(参 `parameters-defaults.md` § 5):
 - `permanently_blocked_actions` / `scope_out_modules` = **frozen** · 用户不可改
-- `token_expire_minutes` / `max_run_duration_minutes` 有 hard_ceiling · 用户可放宽但有上限
-- 派生约束自动 enforce(如 `boundary_low < boundary_high - 0.10`)
+- `token_expire_minutes` / `token_abandoned_minutes` 有 hard_ceiling(≤10)· 用户可放宽但有上限
+- `max_run_duration_minutes` / `max_runs_per_day`:detail 轮改 **override_via: never**(W3 前无消费者 · 不进启动对话 · 避免"以为改了会限制其实不会")
+- 派生约束自动 enforce(`build_effective_config` 硬校验:`boundary_low < boundary_high - 0.10` · `hopeless_min_pages ≤ hopeless_window_pages` 等 · 失败不启动)
 
 **default canonical** 在 `parameters-defaults.md` · 本 SKILL 不重复列。
 
