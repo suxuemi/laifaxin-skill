@@ -64,7 +64,13 @@ inputs:
       recommend_reason: "..."
       coverage_estimate: 5000
       laifaxin_score: 0.82
-    - { audience_index: 2, audience_slug: "...", name: "...", ... }
+      # detail 轮 · 结构化客群维度 · runner 从推演卡片解析填充 · 供 render_label 渲染 label_format(单一数据源)
+      audience_dims:
+        lang: "英语"            # 客群主语言
+        country: "美国"          # 客群主市场/国家
+        role: "经销商"           # 供应链角色(经销商/批发商/零售商/品牌方...)
+        industry: "亚洲食品"     # 行业(可选 · label_format 含 {industry} 时用 · 缺则留空)
+    - { audience_index: 2, audience_slug: "...", name: "...", audience_dims: {...}, ... }
     - { audience_index: 3, ... }
     - { audience_index: 4, ... }
   historical_dead_audiences:
