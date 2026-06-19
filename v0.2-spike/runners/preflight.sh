@@ -6,8 +6,11 @@
 set -uo pipefail
 
 CODEX=/Applications/Codex.app/Contents/Resources/codex
-EXPECTED_VERSION="0.140.0-alpha.2"
-EXPECTED_PLUGINS=("browser@openai-bundled" "chrome@openai-bundled" "computer-use@openai-bundled")
+# detail 轮(F31)· 不锁死 patch 版本(alpha.2 会误杀 alpha.19 等兼容小版本)· 只校最低主次版本
+MIN_VERSION_MAJOR_MINOR="0.140"          # 需要 >= 0.140.x · 已测过 0.140.0-alpha.2 ~ alpha.19
+# detail 轮(F34)· alpha 主路只需 2 个 plugin(computer-use 主 + chrome 辅)· browser@ 非必需(权威表见 HOW-TO § 1)
+REQUIRED_PLUGINS=("computer-use@openai-bundled" "chrome@openai-bundled")
+OPTIONAL_PLUGINS=("browser@openai-bundled")   # 装了不影响 · 不装也 pass
 
 PASS=0
 FAIL=0
@@ -36,16 +39,18 @@ echo "## Check 1: Codex CLI 可执行"
 check "Codex 二进制存在" "[ -x \"$CODEX\" ]"
 
 echo ""
-echo "## Check 2: Codex 版本"
+echo "## Check 2: Codex 版本(最低 $MIN_VERSION_MAJOR_MINOR · 不锁 patch)"
 ACTUAL_VERSION=$($CODEX --version 2>&1 || echo "unknown")
-echo "  expected: $EXPECTED_VERSION"
+echo "  required: >= $MIN_VERSION_MAJOR_MINOR.x"
 echo "  actual:   $ACTUAL_VERSION"
-check "版本匹配" "[[ '$ACTUAL_VERSION' == *'$EXPECTED_VERSION'* ]]"
+# 提取实际 major.minor(如 0.140.0-alpha.19 → 0.140)· 比对 >= MIN
+ACTUAL_MM=$(echo "$ACTUAL_VERSION" | grep -oE "[0-9]+\.[0-9]+" | head -1)
+check "版本 >= $MIN_VERSION_MAJOR_MINOR" "[ -n '$ACTUAL_MM' ] && [ \"\$(printf '%s\n%s' '$MIN_VERSION_MAJOR_MINOR' '$ACTUAL_MM' | sort -V | head -1)\" = '$MIN_VERSION_MAJOR_MINOR' ]"
 
 echo ""
-echo "## Check 3: 3 plugin 启用(runtime 实证 · 不读 config 因为 config 可能 stale)"
+echo "## Check 3: 必需 plugin 启用(runtime 实证 · 不读 config 因为 config 可能 stale)"
 PLUGIN_LIST=$($CODEX plugin list 2>&1)
-for plugin in "${EXPECTED_PLUGINS[@]}"; do
+for plugin in "${REQUIRED_PLUGINS[@]}"; do
     # 实证 `codex plugin list` 输出中含 'installed, enabled' 的行
     check "  plugin $plugin (runtime)" "echo \"\$PLUGIN_LIST\" | grep -E \"^${plugin}\s.*installed,\s+enabled\""
 done

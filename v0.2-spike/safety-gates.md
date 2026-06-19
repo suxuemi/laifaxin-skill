@@ -102,18 +102,27 @@ guarded_actions:
       - "/search/refine-search"
       - "/search/customer-list"
     modal_indicator:                                 # 多重证据 · 不靠单一 URL
-      heading_contains: ["保存联系人", "确认转化"]
+      # detail 轮修 · button_semantics 接受"确认保存",modal heading 也要覆盖,否则合法保存被 false-negative 误拒
+      heading_contains: ["保存联系人", "确认转化", "确认保存"]
       form_field_present: ["公司标签", "联系人标签"]
     required_token: true
-    budget_estimate:                              # r3 #2 结构化字段
+    budget_estimate:                              # detail 轮重写 · 对齐真实点数规则 + 预算源
+      # detail 轮修 · selected_count 不从弹窗读(真实 UI 该字段在"高级"下拉,不在弹窗)
+      #              用 runner 已知的 save_count(= 公式求值结果)· 与签 token 的 payload 同源
       selected_count_source:
-        type: read_modal_field
-        field_label: "选择前 [N] 条数据"
-        value_extractor: "数字"
-      unit_price_source:
-        type: constant
-        value: 1.0                                # 1 邮箱 = 1 点
-      formula: "selected_count × emails_per_company × unit_price"
+        type: runner_known
+        value: save_count                         # = eval(save_companies_formula, boundary_page)
+      # detail 轮修 · 真实单价非 1.0 · 按 docs/zhinan/customer-website-search L134:
+      #   有效邮箱 2 点 / 未知邮箱 1 点 / 无效邮箱 0 点(不扣)
+      unit_price_rule:
+        valid_email: 2                            # 点/个
+        unknown_email: 1
+        invalid_email: 0
+      # 预算预演给**保守上界**:保存前不知道有效/未知比例 · 按最坏(全有效)估 = 2 点/邮箱
+      #   formula(保守上界) = save_count × emails_per_company × 2
+      #   真实扣点在保存后由产品按实际邮箱状态结算 · 预演只为让用户签 token 前看到金额上限
+      formula_upper_bound: "save_count × emails_per_company × 2"
+      note: "预演=保守上界(全有效价)· 真实扣点≤此值 · 用户据此上界拍板签 token"
 ```
 
 ### 2.3 Permanently Blocked(scope 外 · 任何情况不点)
@@ -354,7 +363,8 @@ def safe_click(button_target, run_ctx, pre_signed_token=None):
         # 兜底:看截图 + LLM 推理按钮文本 + 推理可点击坐标
         text, confidence, coords = await llm_extract_button_text_and_coords(screenshot, button_target)
         if confidence < 0.85 or coords is None:
-            return Fail("computer-use button text or coords low confidence", screenshot)
+            # detail 轮必修 · 拒绝分支统一 raise · 不 return 对象(否则 runner 会拿到对象继续走 = fail-open)
+            raise SafetyError("computer-use button text or coords low confidence", screenshot)
         actuation_target = ("coords", coords)              # 用屏幕坐标点击
 
     # 后续 page_url / page_title / macos_a11y 可为 None · matchers 必须接受 None
@@ -363,40 +373,53 @@ def safe_click(button_target, run_ctx, pre_signed_token=None):
     # 3. normalize · curated synonym map(r1 #D3.4 不上 cosine/embedding)
     normalized = normalize_via_curated_map(text)
 
+    # ⚠️ detail 轮钉死 · 错误模型唯一 = 抛异常(raise)· 全部拒绝/失败分支都 raise,绝不 return SafetyError 对象
+    #    理由:runner 是 `await safe_click(...)` 后直接往下走 · 若拒绝是"返回对象"则会被忽略继续执行 = fail-OPEN
+    #    permanently_blocked / state-rule blocked / unknown / 缺 token / consume 失败 → 一律 raise SafetyError
+    #    所有 blocked 分支都先调 run_ctx.record_blocked(...) 递增 audit.permanently_blocked_hits(promote 误操作率靠它)
+
     # 4. state rules 优先匹配(§ 3)
     for rule in state_rules:
         if rule.detection.matches(page_url, page_title, a11y_tree, button_target):
             if rule.action == "permanently_blocked":
-                return SafetyError("blocked by state rule: " + rule.rule_id, screenshot)
+                run_ctx.record_blocked(reason="state_rule:" + rule.rule_id, screenshot=screenshot)   # audit hook
+                raise SafetyError("blocked by state rule: " + rule.rule_id, screenshot)
 
     # 5. context-aware demotion(§ 2.2 guarded_actions)
     matched_guarded = match_guarded_action(normalized, page_url, page_title, a11y_tree)
 
     # 6. 三层匹配
     if normalized in permanently_blocked:
-        return SafetyError("permanently blocked: " + normalized, screenshot)
+        run_ctx.record_blocked(reason="permanently_blocked:" + normalized, screenshot=screenshot)     # audit hook
+        raise SafetyError("permanently blocked: " + normalized, screenshot)
     if matched_guarded:
         # r5 必修 · issue + consume + click 三处用同一 canonical_payload
         payload = canonical_payload(button_target)
         # r10 · 审批单轨:guarded 必须带 runner 预签 token · gates 绝不自签
         if pre_signed_token is None:
-            return SafetyError("guarded action requires pre_signed_token (fail-closed · gates 不自签)")
+            raise SafetyError("guarded action requires pre_signed_token (fail-closed · gates 不自签)")
         token = pre_signed_token
         # consume 内部校验:token.action_id == matched_guarded.action_id · token.payload == payload · sig 有效
         consumed = controller.token_store.consume(token.id, matched_guarded.action_id, payload)
-        if not consumed: return SafetyError("token consume failed (action_id/payload/sig mismatch or already consumed)")
+        if not consumed:
+            raise SafetyError("token consume failed (action_id/payload/sig mismatch or already consumed)")
         # 真实点击
         await computer_use.click(actuation_target)         # r3 #1 · 真用 actuation_target(a11y_node 或 coords)
         run_ctx.update_state(action_taken=matched_guarded.action_id)
-        return
+        return                                             # 成功唯一出口 · 无返回值(成功=不抛异常)
     if normalized in allowed:
         await computer_use.click(actuation_target)         # r3 #1 · 真用 actuation_target(a11y_node 或 coords)
         run_ctx.update_state(action_taken=normalized)
         return
-
-    # 7. 白名单制 · 不在任何列表 → 拒
-    return SafetyError("unknown action (whitelist mode): " + normalized)
+    # 7. 白名单制 · 不在任何列表 → 拒(unknown 也算潜在越界 · 记 audit)
+    run_ctx.record_blocked(reason="unknown_whitelist:" + normalized, screenshot=screenshot)
+    raise SafetyError("unknown action (whitelist mode): " + normalized)
 ```
+
+> **safe_click 契约(detail 轮钉死)**:
+> - **成功** → 正常返回(无返回值)· 已点击 + 已更新 run_ctx
+> - **任何拒绝/失败** → `raise SafetyError`(不是 return)· caller(runner)不写 try 就会冒泡到顶层 fail-closed 兜底(见 runners/README.md run() 顶层 try/except)
+> - **测试**:`pytest.raises(SafetyError)` · **smoke 3**:期望"抛出 SafetyError",不是"返回 disposition 字段"
 
 ## § 6 · Curated Synonym Map(W2 写完整版 · alpha 起步)
 

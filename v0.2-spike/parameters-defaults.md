@@ -41,23 +41,42 @@ boundary_low:
   used_in: "decide_per_page() · BOUNDARY_LOW"
   constraint: "MUST be < boundary_high - 0.10"
 
+hopeless_min_pages:
+  default: 3
+  range: [2, 5]
+  type: integer
+  rationale: "detail 轮 · Tony 决策:至少看满此页数才允许 Hopeless 放弃当前客群 · 防首屏噪声误杀好客群"
+  override_via: conversation
+  used_in: "decide_per_page() · Hopeless 触发下限"
+  constraint: "MUST be <= hopeless_window_pages"
+
+hopeless_window_pages:
+  default: 5
+  range: [3, 10]
+  type: integer
+  rationale: "前 N 页累计平均窗口 · cumulative_avg 在此窗口内 < boundary_low 才 Hopeless"
+  override_via: conversation
+  used_in: "decide_per_page() · Hopeless 上窗"
+
 # ⚠️ r7 删除 · 死参数(decision-prompts § 6.2 明示 confidence 不参与决策门 · 只入 audit)
 # llm_node_1_confidence:
 #   default: 0.70 ...
 
+# detail 轮(F18)· 节点 3(询盘识别)v0.2 alpha **scope-out** · 不在主流程 · 参数改 override_via:never
+#   不进 §0.5 启动对话(否则问一堆本次 run 永不生效的参数 · 误导用户)· v0.3+ 解封时改回 conversation
 llm_node_3_inquiry_auto_threshold:
   default: 0.85
   range: [0.70, 0.95]
   type: float
-  rationale: "询盘 auto-apply 的 candidate_tags.inquiry 阈值"
-  override_via: conversation
+  rationale: "询盘 auto-apply 的 candidate_tags.inquiry 阈值(节点 3 · v0.2 scope-out)"
+  override_via: never        # detail 轮 · v0.2 不可改(节点 3 不在主流程)
 
 llm_node_3_inquiry_flag_threshold:
   default: 0.55
   range: [0.40, 0.70]
   type: float
-  rationale: "询盘候选 ≥ 此值强制人工升级(recall-safe)"
-  override_via: conversation
+  rationale: "询盘候选 ≥ 此值强制人工升级(recall-safe · 节点 3 · v0.2 scope-out)"
+  override_via: never        # detail 轮 · v0.2 不可改
   constraint: "MUST be < llm_node_3_inquiry_auto_threshold"
 ```
 
@@ -82,19 +101,32 @@ emails_per_company:
 save_companies_formula:
   default: "boundary_page * 10"
   type: string
-  alternatives:
-    - "boundary_page * 10"     # 全保存(默认)
+  # detail 轮(F15)· 不用裸 eval · runner 用受限 AST 解析器 safe_arith_eval 求值:
+  #   只放行 名字 boundary_page · 整数字面量 · 运算 + - * / · 函数 min/max · 其它一律拒(防代码注入)
+  enum_or_safe_arith: true
+  alternatives:                # 推荐用这几条预设 · 自定义也必须过 safe_arith_eval + 结果校验
+    - "boundary_page * 10"     # 全保存(默认 · = 最后高精页 × 每页 10 行)
     - "boundary_page * 8"      # 保守保存
-    - "min(boundary_page * 10, 500)"   # 加 cap
-  rationale: "动态保存范围公式 · 默认 boundary × 10 (= 最后准页 × 每页 10 行)"
+    - "min(boundary_page * 10, 500)"   # 自带 cap
+  rationale: "动态保存范围公式 · 默认 boundary_page(=last_high_page)× 10"
   override_via: conversation
-  constraint: "result MUST be ≤ max_save_companies"
+  # detail 轮(F25)· 约束改 "post-cap result" · 因为 boundary_page 最大可到 max_boundary_pages(200)
+  #   裸公式 boundary_page*10 在 200 时 = 2000 > 1000 · 单独看公式会违约 · 真实由 runner min(.., max_save_companies) 兜
+  constraint: "post-cap: runner 求值后强制 save_count = min(result, max_save_companies) · 且必须 1 <= save_count <= max_save_companies 整数 · 否则 fail-closed"
+
+save_task_timeout_s:
+  default: 120
+  range: [30, 600]
+  type: integer
+  rationale: "detail 轮(F21)· 保存为异步任务 · 轮询任务终态的超时 · 超时记 partial + 人工核对"
+  override_via: conversation
+  used_in: "runner poll_save_task()"
 
 max_save_companies:
   default: 1000
   range: [50, 5000]
   type: integer
-  rationale: "单次 run 最多保存公司数 · 防失控"
+  rationale: "单次 run 最多保存公司数 · 防失控 · runner 对 save_count 做 post-cap"
   override_via: conversation
 
 max_boundary_pages:
@@ -140,31 +172,43 @@ token_abandoned_minutes:
   override_via: conversation
   constraint: "MUST be ≤ 10"
 
+# detail 轮(F24)· max_run_duration_minutes / max_runs_per_day 当前包内**无执行消费者**(典型 fail-open)
+#   W3 真接线前:① runner 不读它们限时/限频 ② 故 override_via 改 never · 不进 §0.5 启动对话(避免"以为改了会限制其实不会")
+#   W3 落地"耗时看门狗 + 当日 run 计数"后 · 再改回 conversation 并标 used_in
 max_run_duration_minutes:
   default: 30
   range: [10, 120]
   hard_ceiling: 120
   type: integer
-  rationale: "单次 run 总耗时上限"
-  override_via: conversation
+  rationale: "单次 run 总耗时上限 · ⚠️ W3 未接线 · 当前无消费者"
+  override_via: never                 # detail 轮 · 无消费者 → 暂冻结 · 不误导用户
+  status: not_wired_until_w3
 
 max_runs_per_day:
   default: 3
   range: [1, 10]
   hard_ceiling: 10
   type: integer
-  rationale: "防 dogfood 失控"
-  override_via: conversation
+  rationale: "防 dogfood 失控 · ⚠️ W3 未接线 · 当前无消费者"
+  override_via: never                 # detail 轮 · 无消费者 → 暂冻结
+  status: not_wired_until_w3
 
 # r7 一致性修正:permanently_blocked / scope_out 是 **frozen**(用户不可改)· 不是"可放宽不可越界"
+# detail 轮(F28)· 这两个是 **policy list**,不是可调参数 · 其 canonical 值在 safety-gates.md(白名单/scope)
+#   **不进 run.json.effective_config**(effective_config 只装 §1-7 的可调/冻结标量参数 · 不装策略清单)
+#   runner 不为它们在 effective_config 写值 · 消费者(safe_click)直接读 safety-gates 加载的清单
 permanently_blocked_actions:
   type: frozen
   override_via: never                 # r7 明示 · 用户改请求 → Codex 拒绝并解释
+  canonical_source: "safety-gates.md § 2.3 permanently_blocked"   # detail 轮 · 值在那 · 本文不重列
+  in_effective_config: false
   rationale: "永久 block 列表(发送/激活/删除/导出/黑名单/退订/AI 评分)· scope out · 不接受用户改"
 
 scope_out_modules:
   type: frozen
   override_via: never
+  canonical_source: "safety-gates.md § 0 alpha_scope.out"
+  in_effective_config: false
   rationale: "段 3/4/5 邮件模板/智能跟进/邮件群发 永久 scope out · 不接受用户改"
 ```
 
@@ -206,6 +250,8 @@ v01_baseline_minutes:
 llm_model:
   default: "gpt-5.4"
   type: frozen   # r7 改 frozen · alpha 期不可改(对齐 decision-prompts § 6.2)
+  override_via: never   # detail 轮(F26)· 补齐 · 让解析器按统一机器规则(type:frozen + override_via:never)识别全部 frozen
+  in_effective_config: true
   rationale: "Codex CLI 内部 LLM · 见 ~/.codex/config.toml · alpha 期锁定 gpt-5.4 减少变量"
   warning: "切换 model 会破坏 r1-r7 调优数据 · v0.3+ 再解封"
 
@@ -222,59 +268,91 @@ llm_max_retries:
 启动对话流程(见 SKILL.md § 0.5):
 
 ```
-1. Codex 读本文 · 列出所有 override_via: conversation 参数 + defaults
-2. Codex 问用户:"默认参数如上 · 这次跑要改哪些?(说'默认'直接跑)"
-3. 用户自然语言改(r8 必修 · 删 sequence 残留):
-   - "boundary 改 0.85/0.65"
-   - "单家保存 7 邮箱"
-   - "promote 耗时减少阈值改 30%"
-   - "max_boundary_pages 改 80"
-4. Codex 解析成结构化 override:
-   {
-     "boundary_high": 0.85,
-     "boundary_low": 0.65,
-     "emails_per_company": 7,
-     "promote_duration_reduction_pct": 30,
-     "max_boundary_pages": 80
-   }
-5. 验证 constraints:
-   - boundary_low MUST < boundary_high - 0.10 ✓
-   - 每个值在 range 内
-   - 强约束(token_expire 等)不超 hard_ceiling
-   - frozen 参数(permanently_blocked / scope_out)拒绝改
+1. Codex 读本文 · 列出参数(detail 轮 F29 · 分两组展示 · 避免误导)
+   - active_this_run(本次 run 真生效 · 必问):boundary_high/low · hopeless_min_pages/window · emails_per_company
+     · save_companies_formula · save_task_timeout_s · max_save_companies · max_boundary_pages · token_expire/abandoned · llm_max_retries
+   - inactive / post-run(本次主流程不生效 · 默认折叠 · 用户主动问才列):
+     · promote_*（仅周度 promote 汇总用)· v01_baseline_minutes · label_format（W3 才落 UI)
+   - 不列(override_via: never):llm_model · node3 · max_run_*（无消费者)· permanently_blocked/scope_out（policy 清单)
+2. Codex 问用户:"默认参数如上(active 组)· 这次跑要改哪些?(说'默认'直接跑)"
+3. 用户自然语言改:
+   - "boundary 改 0.85/0.65" · "单家保存 7 邮箱" · "max_boundary_pages 改 80"
+4. Codex 解析成结构化 override:{ "boundary_high": 0.85, "boundary_low": 0.65, "emails_per_company": 7, "max_boundary_pages": 80 }
+5. 验证 constraints(派生约束在 build_effective_config 里**硬校验** · 失败 = 拒绝启动 · 不只是 prose):
+   - 单值在 range 内
+   - 派生:boundary_low < boundary_high - 0.10 · hopeless_min_pages <= hopeless_window_pages · flag < auto
+   - hard_ceiling:token_expire/abandoned <= 10
+   - frozen / override_via:never → 拒绝改并解释
+   - **组合非法**(如 boundary_high=boundary_low=0.70 各自在 range 但派生违约)→ 拒绝 · 不生成 effective_config
 6. Codex 显示 effective config yaml + 问"确认?"
-7. 用户确认 → 写入 run.json.user_overrides · 整个 run 用 effective config
+7. 用户确认 → 写入 run.json.user_overrides + effective_config · 整个 run 用 effective config
 ```
 
 ## § 9 · run.json.user_overrides 字段 schema(对齐 SKILL.md § 3.1)
 
+**正式 schema(detail 轮 F27 · 不再只是 exemplar)**:
+
+```yaml
+user_overrides_item_schema:
+  type: object
+  additionalProperties: false
+  required: [param, default, user_value, original_utterance, normalized_value, at, constraint_passed]
+  properties:
+    param:              { type: string, enum_ref: "§1-7 中 override_via:conversation 的参数名" }
+    default:            {}                       # 该参数 default(类型随参数)
+    user_value:         {}                       # 用户给的原始值
+    original_utterance: { type: string }         # 用户原话
+    normalized_value:   {}                       # 解析后值
+    at:                 { type: string, format: date-time }
+    constraint_passed:  { type: boolean }
+    # 下面两个按 constraint_passed 二选一(detail 轮钉死可空规则):
+    rejection_reason:   { type: [string, "null"] }   # accepted → null · rejected → 必填字符串
+    applied_fallback:   {}                            # accepted → 省略/null · rejected → 必填(退回值)
+  conditional:
+    - if: "constraint_passed == true"  then: "rejection_reason == null AND applied_fallback 省略"
+    - if: "constraint_passed == false" then: "rejection_reason 非空 AND applied_fallback 必填"
+```
+
+示例:
+
 ```yaml
 user_overrides:
-  - param: boundary_high
-    default: 0.80
-    user_value: 0.85
-    original_utterance: "boundary 改 0.85/0.65"     # r7 必修 · 用户原话
-    normalized_value: 0.85                            # 解析后值
-    at: 2026-06-18T20:00:00+08:00
-    constraint_passed: true
-    rejection_reason: null                            # 接受 · 无 rejection
-  - param: token_expire_minutes
-    default: 5
-    user_value: 15                                    # 超 hard_ceiling 10
-    original_utterance: "token 改 15 分钟"
-    normalized_value: 15
-    at: 2026-06-18T20:00:00+08:00
-    constraint_passed: false                          # 不接受
-    rejection_reason: "exceeds hard_ceiling (10)"     # r7 必修 · 拒绝原因
-    applied_fallback: 5                               # 退回 default
+  - { param: boundary_high, default: 0.80, user_value: 0.85, original_utterance: "boundary 改 0.85/0.65",
+      normalized_value: 0.85, at: 2026-06-19T20:00:00+08:00, constraint_passed: true, rejection_reason: null }
+  - { param: token_expire_minutes, default: 5, user_value: 15, original_utterance: "token 改 15 分钟",
+      normalized_value: 15, at: 2026-06-19T20:00:00+08:00, constraint_passed: false,
+      rejection_reason: "exceeds hard_ceiling (10)", applied_fallback: 5 }
+```
 
-# effective_config 独立顶层字段 · 整个 run 真正用的 config(r7 必修 · 持久化)
+**effective_config 顶层字段(detail 轮 F35 · required schema · 消费者不得用 `// default` 静默补)**:
+
+```yaml
+# 必含全部 §1-7 中 in_effective_config 的标量参数(缺键 = build 失败 · 不静默)
+# 不含:permanently_blocked_actions / scope_out_modules(policy 清单 · in_effective_config:false · 见 § 5)
 effective_config:
-  boundary_high: 0.85                                 # 接受了 user override
-  boundary_low: 0.65
-  token_expire_minutes: 5                             # rejected · fallback to default
-  emails_per_company: 5                               # default
-  # ... 全 § 1-7 参数
+  required_keys:        # runner build_effective_config 必须全部写齐 · promote/decision/safety 直接读 · 无 fallback
+    - boundary_high
+    - boundary_low
+    - hopeless_min_pages
+    - hopeless_window_pages
+    - emails_per_company
+    - save_companies_formula
+    - save_task_timeout_s
+    - max_save_companies
+    - max_boundary_pages
+    - token_expire_minutes
+    - token_abandoned_minutes
+    - max_run_duration_minutes      # 值在 · 但 status:not_wired_until_w3(无消费者)
+    - max_runs_per_day              # 同上
+    - llm_model
+    - llm_max_retries
+    - llm_node_3_inquiry_auto_threshold     # frozen · 值在但 v0.2 不消费
+    - llm_node_3_inquiry_flag_threshold
+    - promote_consecutive_successes
+    - promote_duration_reduction_pct
+    - promote_max_user_interventions_per_run
+    - v01_baseline_minutes
+    - label_format
 ```
 
 ## § 10 · 关联

@@ -61,8 +61,10 @@ Codex 没有 Claude Code 的 frontmatter 自动加载机制,但本 skill 是纯 
 |---|---|---|
 | `computer-use@openai-bundled` | 看屏幕 + macOS a11y + 点击 / 键盘 | ✅ 主路 |
 | `chrome@openai-bundled` | 读当前 tab URL / title(辅助验证) | ✅ 辅助 |
+| `browser@openai-bundled` | 通用浏览器原语 | ⬜ 可选(非主路 · 装了不影响) |
 
 > ⚠️ `browser-use@openai-bundled` 不存在(plugin marketplace 没有 · 老 config.toml 有也忽略)· 主路用 `computer-use`。
+> 权威 plugin 表见 [HOW-TO-START-SPIKE.md § 0](HOW-TO-START-SPIKE.md) · preflight.sh 按此校验(只查 2 个必需)。
 
 ---
 

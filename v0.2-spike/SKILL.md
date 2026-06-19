@@ -1,6 +1,6 @@
 ---
 name: laifaxin-outreach-v0.2
-description: 你在场监督 · AI 帮你在「来发信」网页里干两件事 —— ① 输产品 → 选客群 ② 翻页判精度 → 保存对的公司联系人 · 写信发信回信不碰(走 v0.1)· 适配 Claude Code 自动加载 + Codex 手动 @ 引用 · 触发词:"在来发信里帮我搜客 / 翻页判精度 / 保存联系人 / 接管登录的 web.laifaxin.com / 走 browser spike"
+description: 你在场监督 · AI 帮你在「来发信」网页里实际操作 —— ① 输产品 → 选客群 ② 翻页判精度 → 保存对的公司联系人 · 写信发信回信不碰(走 v0.1)· 适配 Claude Code 自动加载 + Codex 手动 @ 引用 · 仅当用户明确要"在网页里实际操作 / 接管已登录的 web.laifaxin.com / 走 browser spike"时触发 · "问方法/出关键词/写文案/排序列/处理回信"一律走 v0.1 不触发本 skill
 ---
 
 # Laifaxin Outreach v0.2 · 浏览器陪跑 spike(alpha)
@@ -145,32 +145,38 @@ raw/prospecting/<product>/runs/<run_id>/            # 入 repo(跨设备审计)
 ```yaml
 run_id: timestamp-slug-<n>             # 不是 Codex SESSION_ID(UUID)
 started_at / finished_at / duration_seconds
-result: success | failed | aborted | partial
-user_overrides:                        # § 0.5 启动对话产物(α.3.3 同 parameters-defaults § 9)
+result: success | partial | failed | aborted | repick   # detail 轮 · 加 repick(用户拒客群/Hopeless 提前退)
+# detail 轮(F20)· 各阶段 phase-scoped · 允许 null + 带 status · 失败/提前退出 run 不必造假填成功字段
+phase_status:                          # 每阶段独立状态 · 让失败 run 也能如实落盘
+  inference: pending | done | skipped | failed
+  sampling:  pending | done | skipped | failed
+  saving:    pending | done | partial | skipped | failed
+user_overrides:                        # § 0.5 启动对话产物(同 parameters-defaults § 9 正式 schema)
   - { param, default, user_value, original_utterance, normalized_value, at, constraint_passed, rejection_reason, applied_fallback }
-effective_config:                      # default + overrides 合并后 · 整个 run 真正用的 config
-  boundary_high: 0.85                  # 若用户改了 · 否则填 default
-  emails_per_company: 7
-  # ... 全 § 1-7 参数
-inference:
-  chosen_audience: { audience_index, audience_slug, name }
-sampling:
+effective_config:                      # default + overrides 合并 · 整个 run 真正用 · required_keys 见 parameters-defaults § 9
+  # ... 全 § 1-7 in_effective_config 参数(不含 permanently_blocked/scope_out policy 清单)
+inference:                             # nullable · 未到此阶段 = null · phase_status.inference 记状态
+  chosen_audience: { audience_index, audience_slug, name } | null
+sampling:                             # nullable
   method: sequential_paging
   pages_read: int
   per_page_accuracy: [{page, accuracy}]   # array
-  boundary_page: int                      # 最后准页(双页 < boundary_low 之前)
-  save_companies: int                     # = eval(effective_config.save_companies_formula, {boundary_page})  · capped by max_save_companies
-saving:
-  task_id, saved_companies, saved_emails, tags_applied
+  terminal: BoundaryReached | NoNextPage | MaxPages | Hopeless   # detail 轮 · 翻页如何收尾
+  boundary_page: int | null               # = last_high_page(最后一个 ≥ boundary_high 的页)· 无高精页时 null
+  save_companies: int | null              # = safe_arith_eval(save_companies_formula, {boundary_page}) post-cap · 见 runner
+saving:                               # nullable · 异步保存
+  task_id: str | null
+  task_state: pending | done | failed     # detail 轮 F21 · 只有 done 才允许 result=success
+  saved_companies / saved_emails / tags_applied
 audit:
   user_interventions: [{at, reason, response}]
   warnings: []
-  permanently_blocked_hits: int           # 0 = 没碰过永久 block(promote 必要)
+  permanently_blocked_hits: int           # 0 = 没碰过永久 block(promote 必要)· 由 safe_click record_blocked 递增
   anti_bot_trigger_count: int
   screenshots_dir: ~/.codex/runs/<run_id>/screenshots/
   llm_logs: ~/.codex/runs/<run_id>/llm_logs.jsonl
   artifacts_manifest: artifacts.json
-failure_diagnostics:                      # null if successful
+failure_diagnostics:                      # null if successful · 任一阶段 failed/aborted 必填
   error_type / invalid_fragment / repair_attempts / taken_over_by_human / final_action
 ```
 
@@ -184,17 +190,20 @@ failure_diagnostics:                      # null if successful
 3. LLM 节点 1(decision-prompts.md § 1):选客群 · Confirm 闸 1 用户拍板
 4. 点"立即查看"进入搜索结果
 5. 翻页 sequential · 每翻一页调用 LLM 节点 2(decision-prompts.md § 2)· **阈值全部来自 `effective_config`**(下面只是 default · 用户可在 § 0.5 启动对话覆盖):
-   - 当前页 ≥ `boundary_high`(default 0.80) → 翻下一页
-   - `boundary_low` ~ `boundary_high` 中间区 → 翻下一页(不停)
+   - 当前页 ≥ `boundary_high`(default 0.80) → 翻下一页(记为高精页 · 更新 last_high_page)
+   - `boundary_low` ~ `boundary_high` 中间区 → 翻下一页(不停 · **不算高精页**)
    - 当前 < `boundary_low`(default 0.60) 且 上一页 ≥ `boundary_low` → 翻下一页确认(单页不判 boundary)
-   - **双页连续 < `boundary_low` → boundary 确认**(此即"精度边界")
-   - 总页数上限 = `effective_config.max_boundary_pages`(default 50 · 防失控)
-6. 保存范围 = `eval(effective_config.save_companies_formula, {boundary_page})` · default 公式 `boundary_page * 10` · cap = `effective_config.max_save_companies`(default 1000)· 邮箱/家 = `effective_config.emails_per_company`(整数 · default 5 · range 3-10 · 实际有几个存几个不超此值)
+   - **双页连续 < `boundary_low` → boundary 确认** · `boundary_page = last_high_page`(最后一个 ≥0.80 页 · Tony 决策:中间区未证实页不纳入保存)
+   - 翻页前查"下一页"可点性 · 空页/不可点 = 真实末页 → **NoNextPage 终态**
+   - 跑满 `max_boundary_pages`(default 50)未触边界 → **MaxPages 终态** · 回退用 last_high_page
+   - Hopeless(累计 ≥`hopeless_min_pages`(default 3)页均值仍 < boundary_low)→ 重选客群(repick)
+   - **终态收口**:若整段无任何高精页 → 不进保存 · repick(没东西值得存)
+6. 保存范围 = `safe_arith_eval(effective_config.save_companies_formula, {boundary_page})` · **受限 AST 求值不用裸 eval**(只放行 boundary_page/整数/+-*//min/max)· default `boundary_page * 10` · post-cap `min(.., max_save_companies)` · 结果强校验为 [1, max_save_companies] 整数否则 fail-closed · 邮箱/家 = `effective_config.emails_per_company`(整数 · default 5)
 7. 保存动作两步(对齐 safety-gates.md § 2):
-   - ① `safe_click("保存联系人")` — **allowed**(普通点击 · 开保存弹窗 · 不需 token)
-   - ② Confirm 闸 2:用户签发 one-time token(action_id = `confirm_save_contacts` · 预算预演:count × emails_per_company × 单价)· **审批模型唯一**:runner 预签 token 透传给 `safe_click("确认转化", pre_signed_token=...)`,gates 校验 action_id+payload+sig 后**只 consume**,**绝不**二次 `await_user_token()`;guarded 缺 token = fail-closed(详见 safety-gates.md § 4)
-8. 写回 run.json + summary.md + artifacts.json
-9. 完成 · 用户 review
+   - ① `safe_click("保存联系人")` — **allowed**(开保存弹窗 · 不需 token)· 然后 runner 显式设置/校验弹窗"选择前 N 条"= save_count · 不一致 = fail-closed
+   - ② Confirm 闸 2:用户签发 one-time token(action_id = `confirm_save_contacts` · 预算预演保守上界 = `save_count × emails_per_company × 2`(全有效价 · 真实有效2/未知1/无效0))· **审批唯一**:runner 预签透传给 `safe_click("确认转化", pre_signed_token=...)`,gates 校验后**只 consume** · guarded 缺 token = fail-closed
+8. **异步保存收尾**(detail 轮):点确认 ≠ 保存完成 · 拿 task_id 轮询保存任务到终态 · `done` 才记 `result=success`;超时/未达终态记 `partial` + 人工核对
+9. 写回 run.json + summary.md + artifacts.json · 完成 · 用户 review
 ```
 
 **⚠️ 主流程**:

@@ -158,13 +158,22 @@ def decide(parsed, inputs):
     if parsed["chosen"] not in [1, 2, 3, 4, None]:
         return Failure(reason="invalid chosen")
 
-    # 条件 B:applied_rules 至少 1 条 + evidence_snippets 至少 1 条 + r4 #4 hit validation
+    # 条件 B:applied_rules 至少 1 条 + evidence_snippets 至少 1 条 + hit validation
     if not parsed["applied_rules"] or not parsed["evidence_snippets"]:
         return Failure(reason="missing evidence/rules")
-    # r4 #4 · evidence 必须命中 inputs(防 LLM 编造)
+    # detail 轮加强 · 防 LLM 编造证据(原版只要"任意一条命中任意候选"就放行 · 太松)
     candidates_text = " ".join(c["name"] + " " + c["recommend_reason"] for c in inputs["candidates"])
-    if not any(snippet_keyword_in_text(snip, candidates_text) for snip in parsed["evidence_snippets"]):
-        return Failure(reason="evidence_snippets_no_input_hit")
+    # B1 · 每条 evidence 都必须命中输入(任一条瞎编 = 拒)
+    if not all(snippet_keyword_in_text(snip, candidates_text) for snip in parsed["evidence_snippets"]):
+        return Failure(reason="some_evidence_snippet_not_in_input")
+    # B2 · chosen 非空时 · 至少一条 evidence 必须命中 chosen 对应候选(防证据命中的是别的候选)
+    if parsed["chosen"] is not None:
+        chosen_cand = next((c for c in inputs["candidates"] if c["audience_index"] == parsed["chosen"]), None)
+        if chosen_cand is None:
+            return Failure(reason="chosen index not in candidates")
+        chosen_text = chosen_cand["name"] + " " + chosen_cand["recommend_reason"]
+        if not any(snippet_keyword_in_text(snip, chosen_text) for snip in parsed["evidence_snippets"]):
+            return Failure(reason="no_evidence_hits_chosen_candidate")
 
     # 条件 C:why_not_top_alt 一致性(chosen=null 必须 audience_index=0)
     if parsed["chosen"] is None and parsed["why_not_top_alt"]["audience_index"] != 0:
@@ -271,11 +280,12 @@ schema:
   additionalProperties: false   # r5 必修 · no extra keys
   required: [total_rows, on_target_count, on_target_indices, not_on_target_indices, flagged_indices, accuracy, evidence_snippets]
   properties:
-    total_rows: { type: integer, enum: [10] }   # 来发信每页恒 10 行
+    # detail 轮修 · total_rows 不再锁死 10 · 末页/小结果集可能 < 10 · 空页 = 0
+    total_rows: { type: integer, minimum: 0, maximum: 10 }
     on_target_count: { type: integer, minimum: 0, maximum: 10 }
     on_target_indices:
       type: array
-      items: { type: integer, minimum: 0, maximum: 9 }
+      items: { type: integer, minimum: 0, maximum: 9 }   # 索引上限随 total_rows-1 · cross_field 再校
       uniqueItems: true
     not_on_target_indices:
       type: array
@@ -293,12 +303,19 @@ schema:
       minItems: 1
 
 cross_field_validation:
+  # detail 轮修 · total_rows 必须 == 真实输入行数(防 LLM 假报 10 行 / 漏读)
+  - total_rows == len(inputs["rows"])
   - len(on_target_indices) == on_target_count
   - len(on_target_indices) + len(not_on_target_indices) == total_rows
+  - all(i < total_rows for i in on_target_indices + not_on_target_indices)   # 索引不越真实行数
   - intersection(on_target_indices, not_on_target_indices) == []
-  - accuracy == on_target_count / total_rows
+  - accuracy == (on_target_count / total_rows if total_rows > 0 else 0.0)    # 防 div0:空页 accuracy=0
   - set(flagged_indices).issubset(set(not_on_target_indices))   # r2 #D2.2 子集约束
 ```
+
+> **空页 / 末页不足 10 行(detail 轮)**:
+> - `total_rows == 0`(翻到空页)→ runner 视为 `NoNextPage` 终态(见 runners/README.md 主循环)· 不调 LLM 节点 2
+> - `0 < total_rows < 10`(末页不足)→ 正常调节点 2 · `accuracy = on_target_count / total_rows` · 照常进 policy
 
 ### 2.4 Decision Policy · 双页连续跌破 + 80% 对齐(r1 + r2 必修)
 
@@ -328,17 +345,22 @@ def decide_per_page(parsed, inputs, page_history):
     # ⚠️ runner 流程:① eval_node 拿 accuracy → ② append → ③ run_policy(policy 读 page_history)
     # 故 policy 看到的 page_history 已含当前页 · len ≥ 1(防 div0)
 
-    # ⚠️ r7 必修 · 所有 return 必须与 § 2.2 disposition payload schema 一致
-    # 字段名:Continue/Hopeless/BoundaryReached 都填 accuracy · Hopeless 用 cumulative_avg(不是 avg)
-    # ---- Hopeless 优先判 · 防 r2 #3 不可达 ----
-    if len(page_history) > 0 and len(page_history) <= 5:
-        # r8 必修 · page_history 元素是 dict {"page": int, "accuracy": float}
+    # ---- last_high_page:最后一个 accuracy >= boundary_high 的页(detail 轮 · Tony 决策:只保存到高精页)
+    # page_history 元素是 dict {"page": int, "accuracy": float}
+    high_pages = [p["page"] for p in page_history if p["accuracy"] >= ACCURATE_HIGH]
+    last_high_page = max(high_pages) if high_pages else None
+
+    # ⚠️ 所有 return 必须与 § 2.2 disposition payload schema 一致
+    # ---- Hopeless 优先判(detail 轮 · Tony 决策:至少看满 3 页再判 · 防首屏噪声误杀)----
+    MIN_HOPELESS_PAGES = effective_config["hopeless_min_pages"]   # default 3 · range [2, 5]
+    HOPELESS_WINDOW = effective_config["hopeless_window_pages"]   # default 5(前 N 页累计窗口)
+    if MIN_HOPELESS_PAGES <= len(page_history) <= HOPELESS_WINDOW:
         cumulative_avg = sum(p["accuracy"] for p in page_history) / len(page_history)
         if cumulative_avg < BOUNDARY_LOW:
             return Hopeless(
                 accuracy=current,
                 cumulative_avg=cumulative_avg,
-                reason="cumulative_avg_low_in_first_5_pages"
+                reason=f"cumulative_avg_low_after_{len(page_history)}_pages"
             )
 
     # ---- Continue 准 ----
@@ -347,11 +369,20 @@ def decide_per_page(parsed, inputs, page_history):
 
     # ---- Boundary 双页确认 ----
     if current < BOUNDARY_LOW and (prev is not None and prev < BOUNDARY_LOW):
-        boundary_page = page - 2
+        # detail 轮 · Tony 决策:at_page = last_high_page(最后一个 >=0.80 的页)
+        #   不再用 page-2 · 因为 page-2 可能是 0.60-0.79 的 middle_zone 未证实页,不该纳入保存
+        if last_high_page is None:
+            # 双低确认前从未出现高精页 → 没东西值得存 → Hopeless(等价"重搜")
+            cumulative_avg = sum(p["accuracy"] for p in page_history) / len(page_history)
+            return Hopeless(
+                accuracy=current,
+                cumulative_avg=cumulative_avg,
+                reason="boundary_reached_but_no_high_accuracy_page"
+            )
         return BoundaryReached(
             accuracy=current,
-            at_page=boundary_page,
-            # r10 · 不带 save_companies · runner 用 effective_config.save_companies_formula(boundary_page) 求
+            at_page=last_high_page,        # 只保存到最后高精页 · runner 用 formula(at_page) 求保存数
+            # 不带 save_companies · runner 用 effective_config.save_companies_formula(at_page) 求
             note="two_consecutive_low_pages_confirm"
         )
 
@@ -368,6 +399,7 @@ def decide_per_page(parsed, inputs, page_history):
 
 **关键差异 vs 原版**:
 - 单页跌破 0.7 不再立判 boundary · 必须**双页连续 < 0.6** 才确认
+- **detail 轮 · Tony 决策**:Hopeless 至少看满 3 页才触发(防首屏噪声误杀)· boundary 保存范围 = 最后一个 ≥0.80 高精页(`last_high_page` · 不含 0.60-0.79 中间区未证实页)
 - 中间区(0.6-0.8)继续翻 · 不停
 - `accuracy` 是 schema 验证过的整数比 · 不是模型 self-reported confidence
 
