@@ -195,9 +195,18 @@ class V02SpikeRunner:
         assert modal_n == save_count, f"弹窗保存数 {modal_n} ≠ 审批数 {save_count} · fail-closed"
 
         # detail 轮(N6)· 打标签:弹窗"公司标签/联系人标签"填 label_format 渲染值(SKILL §1 in_scope · saving.tags_applied)
-        #   label_format 用 effective_config(本次 run 生效)· 渲染 {lang}-{country}-{product}-{role}
-        tags_applied = render_label(self.effective_config["label_format"],
-                                    audience=chosen_audience_id, product=self.product)
+        #   渲染字段来源(contract):label_format 模板里的占位符从下面取值,缺字段 → 该占位符留空并 warn(不 crash)
+        #     {lang}/{country}/{role}/{industry} ← 选中客群卡片 chosen_card(节点 1 输出 · 卡片名/slug 已含这些维度)
+        #     {product}                          ← self.product(用户输入)
+        chosen_card = next(c for c in candidates if c["audience_index"] == chosen_audience_id)
+        label_fields = {
+            "lang":     chosen_card.get("lang"),       # 卡片解析 · 如 "英语"/"en"
+            "country":  chosen_card.get("country"),     # 如 "美国"/"US"
+            "role":     chosen_card.get("role"),        # 供应链角色 · 如 "经销商"
+            "industry": chosen_card.get("industry"),    # 可选维度(label_format 含 {industry} 时用)
+            "product":  self.product,
+        }
+        tags_applied = render_label(self.effective_config["label_format"], label_fields)   # 缺字段留空 + warn
         await self.set_save_modal_tags(tags_applied)   # 填入弹窗标签字段 · 仍是 allowed 编辑 · 不需 token
 
         # ② Confirm 闸 2 · 审批单轨:guarded = 弹窗"确认转化"(action_id=confirm_save_contacts)
@@ -401,7 +410,7 @@ def test_save_count_from_formula():
 - [ ] **分支 contract**(detail 轮 F17)· `handle_repick(reason)` / `handle_fail_closed(d)` / `pause_and_alert(msg)` 落 audit + result 枚举
 - [ ] **`build_effective_config(defaults, user_overrides)`**(detail 轮 F14)· 合并 + **硬校验派生约束**(boundary_low<high-0.10 / hopeless_min<=window / flag<auto / token<=ceiling)· 任一违约 raise · 不生成 config · 不启动
 - [ ] **`run_startup_dialog(defaults)`**(detail 轮 F14)· SKILL §0.5 启动对话 · 产 user_overrides(active 组必问 · inactive 折叠)
-- [ ] **`render_label(label_format, audience, product)`** + **`set_save_modal_tags(tags)`**(detail 轮 N6)· 渲染 label_format → 填保存弹窗"公司/联系人标签" → saving.tags_applied
+- [ ] **`render_label(label_format, label_fields)`** + **`set_save_modal_tags(tags)`**(detail 轮 N6)· label_fields = {lang,country,role,industry(来自客群卡片), product(用户输入)} · 占位符缺值留空+warn · 渲染 → 填保存弹窗"公司/联系人标签" → saving.tags_applied · 卡片字段解析(lang/country/role/industry)也需 W3 落地
 
 ## 关联
 

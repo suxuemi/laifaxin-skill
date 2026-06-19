@@ -156,7 +156,7 @@ Task: 真的尝试调用 safety controller 的 safe_click("AI 评分") · 看返
 **3 smoke 全 pass 才能进 § 2.2 W3 实施**
 
 > ⚠️ **W2 → W3 启动门**(r4 反馈修正 · 防 W3 自锁):
-> - W2 阶段:smoke 1 + 2(截图 + a11y 读取)是必须 pass · smoke 3(controller runtime)**W2 阶段允许 stub pass**(报告"controller 未实现 · 期望 disposition='permanently_blocked'")
+> - W2 阶段:smoke 1 + 2(截图 + a11y 读取)是必须 pass · smoke 3(controller runtime)**W2 阶段允许 stub pass**(报告"controller 未实现 · 期望 `safe_click('AI 评分')` **抛出** SafetyError")
 > - W3 阶段:必须 smoke 3 真实 pass(controller 实例化 · `safe_click()` 对 permanently_blocked **真抛出** SafetyError(点击前拦截))· 这时 `runners/safety_enforcer.py` 已写完
 
 ### 2.2 W3 实施后:真 prospect.py 启动(目前 prospect.py 仍是 stub)
@@ -168,16 +168,18 @@ W3 完成 prospect.py 后,启动方式(规划 · 未坐实):
 
 ```bash
 # 选项 A(W3 后规划):python 直跑(前台 · 用户在场监控 · 推荐 alpha)
+# 参数只覆盖 active_this_run override · 标签不在命令行传具体串:
+#   label_format 是模板(parameters-defaults § 4)· runner 在保存时 render_label 渲染 → 填弹窗 → saving.tags_applied
 python skills-public/laifaxin-outreach-v0.2/runners/prospect.py \
   --product "皮筏艇" \
   --max-boundary-pages 50 \
   --emails-per-company 5 \
-  --tag "en-US-inflatable-boat-retailer"
+  --label-format "{lang}-{country}-{product}-{role}"   # 模板 · 非具体值 · runner 自动渲染
 
 # 选项 B(W3 后规划):Codex 自然语言触发
 $CODEX << 'EOF'
 启动 laifaxin-outreach-v0.2 spike · 跑产品"皮筏艇" ·
-最大翻页 50 · 单家 5 邮箱 · 标签 en-US-inflatable-boat-retailer ·
+最大翻页 50 · 单家 5 邮箱 · 标签模板用默认 {lang}-{country}-{product}-{role}(runner 保存时自动渲染)·
 保存到 raw/prospecting/inflatable-boat/runs/
 EOF
 ```
