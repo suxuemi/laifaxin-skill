@@ -352,8 +352,8 @@ effective_config:
     - max_runs_per_day              # 同上
     - llm_model
     - llm_max_retries
-    - llm_node_3_inquiry_auto_threshold     # frozen · 值在但 v0.2 不消费
-    - llm_node_3_inquiry_flag_threshold
+    - llm_node_3_inquiry_auto_threshold     # override_via:never(非 frozen · scope-out)· 值在但 v0.2 不消费
+    - llm_node_3_inquiry_flag_threshold     # 同上
     - promote_consecutive_successes
     - promote_duration_reduction_pct
     - promote_max_user_interventions_per_run

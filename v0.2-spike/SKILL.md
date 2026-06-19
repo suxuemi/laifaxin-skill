@@ -71,7 +71,7 @@ description: 你在场监督 · AI 帮你在「来发信」网页里实际操作
 2. 列出所有 `override_via: conversation` 参数 · 显示 defaults
 3. 问用户:"默认参数如上 · 这次跑要改哪些?(说'默认'直接跑)"
 4. 解析用户自然语言改动 → 结构化 override yaml
-5. 验证 constraints(range / hard_ceiling / frozen / 派生约束)
+5. 验证 constraints(range / hard_ceiling / `override_via: never` 一律拒(含 frozen 的 llm_model/policy 清单 + 非 frozen 的 max_run_*/node3)/ 派生约束)
 6. 显示 effective config 给用户确认
 7. 写入 run.json.user_overrides · 整个 run 用 effective config
 ```
@@ -85,7 +85,7 @@ description: 你在场监督 · AI 帮你在「来发信」网页里实际操作
 **强约束**(参 `parameters-defaults.md` § 5):
 - `permanently_blocked_actions` / `scope_out_modules` = **frozen** · 用户不可改
 - `token_expire_minutes` / `token_abandoned_minutes` 有 hard_ceiling(≤10)· 用户可放宽但有上限
-- `max_run_duration_minutes` / `max_runs_per_day`:detail 轮改 **override_via: never**(W3 前无消费者 · 不进启动对话 · 避免"以为改了会限制其实不会")
+- **`override_via: never` 一律不可改**(校验时拒绝 + 解释)· 两类:① frozen(`llm_model` · `permanently_blocked`/`scope_out` policy 清单)② 非 frozen 但 never(`max_run_*` 无消费者 · 节点 3 参数 scope-out)· 详见 parameters-defaults 前言"参数类别"
 - 派生约束自动 enforce(`build_effective_config` 硬校验:`boundary_low < boundary_high - 0.10` · `hopeless_min_pages ≤ hopeless_window_pages` 等 · 失败不启动)
 
 **default canonical** 在 `parameters-defaults.md` · 本 SKILL 不重复列。
