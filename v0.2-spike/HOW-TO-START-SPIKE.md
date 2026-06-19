@@ -193,7 +193,7 @@ EOF
 | 产品 | 你最熟的一个(如"皮筏艇")| 已知客群对路 · 易判 agent 是否选对 |
 | 目标 boundary 上限 | 50 页(500 公司)| 起步小 · 别一次跑 600 |
 | 单家邮箱数 | 5 | 起步保守 · 后续可调 10 |
-| 标签 | 完整公式 `<lang>-<country>-<product>-<role>` | 见 [docs/zhinan/03-save-customers](https://www.laifa.xin/zhinan/03-save-customers) |
+| 标签模板 label_format | `{lang}-{country}-{product}-{role}`(花括号模板 · runner 保存时 render_label 渲染)| 见 [docs/zhinan/03-save-customers](https://www.laifa.xin/zhinan/03-save-customers) |
 | 是否激活计划 | **❌ 否** | scope out · 永久 block · spike 只测搜+保存 |
 
 ## § 4 · 紧急停 SOP(降级表述 · 删除过承诺)
